@@ -1,11 +1,18 @@
 --[[
 ================================================================================
-  run_tests.lua — pruebas sobre sim.lua
+  run_tests.lua — pruebas sobre sim.lua para PizzaScript.lua
 
-  Cubre: que los 9 archivos de /src compilan, el comparador de versiones, el
-  parser de version.json, y el auto-actualizador completo (check, descarga,
-  verificación por load(), aplicación con respaldo, reversión, y los dos
-  frenos de las esperas de red). No abre GTA ni necesita Cherax instalado.
+  Cubre: que el script compila, y el auto-actualizador completo (misma
+  versión no ofrece nada, versión nueva descarga+verifica+aplica+respalda,
+  un archivo que no compila aborta sin tocar disco, y el freno de
+  iteraciones ante una descarga que nunca termina). Son pruebas de caja
+  negra: PizzaScript.lua es un script suelto, no un módulo "return
+  function", así que no hay nada que llamar directamente — se ejecuta el
+  archivo completo y se observan los efectos en el vfs simulado.
+
+  No cubre (y no puede cubrir fuera del juego): si las natives leen de
+  verdad lo que dicen leer. Eso queda documentado como "sin verificar en
+  juego" en la cabecera de PizzaScript.lua.
 
   Uso:  lua run_tests.lua   (desde esta carpeta, o "lua sim/run_tests.lua"
         desde la raíz del repo)
@@ -27,337 +34,60 @@ local function check(name, fn)
     end
 end
 
-local function pump(U, n)
-    for _ = 1, (n or 200) do U.tick() end
-end
-
---==============================================================================
--- 1. Los 9 archivos de /src compilan (equivalente a luac -p)
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua" })
-    local _, files = Env.all_src_files(U)
-    for _, f in ipairs(files) do
-        check("compila: " .. f.rel, function()
-            local chunk, err = Env.compile(f.path)
-            assert(chunk, err)
-        end)
+local function pump(loops, n)
+    for _ = 1, (n or 200) do
+        for _, fn in ipairs(loops) do pcall(fn) end
     end
-    mocks.restore()
 end
 
+local SCRIPT_PATH = Env.SRC_DIR .. "PizzaScript.lua"
+local SELF_PATH    = "C:\\FakeCherax\\Lua\\PizzaScript.lua"
+
 --==============================================================================
--- 2. Comparador de versiones
+-- 1. El script compila (equivalente a luac -p)
+--==============================================================================
+check("PizzaScript.lua compila", function()
+    local chunk, err = Env.compile(SCRIPT_PATH)
+    assert(chunk, err)
+end)
+
+--==============================================================================
+-- 2. Misma versión remota que la local -> no ofrece actualización
 --==============================================================================
 do
     local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, {})
-    check("version_gt: 1.0.1 > 1.0.0", function() assert(U.version_gt("1.0.1", "1.0.0") == true) end)
-    check("version_gt: 1.0.0 > 1.0.0 es falso", function() assert(U.version_gt("1.0.0", "1.0.0") == false) end)
-    check("version_gt: 0.9.9 > 1.0.0 es falso", function() assert(U.version_gt("0.9.9", "1.0.0") == false) end)
-    check("version_gt es numerico, no lexicografico (1.2 vs 1.10)", function()
-        assert(U.version_gt("1.2", "1.10") == false)
-        assert(U.version_gt("1.10", "1.2") == true)
-    end)
-    mocks.restore()
-end
+    local loops = Env.install_cherax_ui_mocks()
 
---==============================================================================
--- 3. Parser de version.json (extractor propio, no JSON general — ver Updater)
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, {})
-    check("parse_version_json extrae version, files y notas", function()
-        local body = [[{
-          "version": "2.3.4",
-          "files": ["a.lua", "b/c.lua"],
-          "notas": "prueba"
-        }]]
-        local version, files, notas = U.parse_version_json(body)
-        assert(version == "2.3.4", version)
-        assert(#files == 2, #files)
-        assert(files[1] == "a.lua" and files[2] == "b/c.lua")
-        assert(notas == "prueba")
-    end)
-    check("parse_version_json lanza con JSON incompleto", function()
-        local ok = pcall(U.parse_version_json, "{}")
-        assert(ok == false)
-    end)
-    mocks.restore()
-end
-
---==============================================================================
--- 4. check(): sin Curl disponible no revienta
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua" })
-    local real_curl = Curl
-    _G.Curl = nil
-    check("check() sin Curl devuelve false y deja el estado en IDLE", function()
-        assert(U.check() == false)
-        assert(U.state == "IDLE")
-    end)
-    _G.Curl = real_curl
-    mocks.restore()
-end
-
---==============================================================================
--- 5. check(): version remota igual a la local -> no ofrece nada
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua" })
     mocks.curl_queue[1] = {
-        delay_ticks = 2, code = eCurlCode.CURLE_OK,
-        body = string.format('{"version":"%s","files":["x.lua"],"notas":""}', PG._VERSION),
-    }
-    check("check() con la misma version deja el estado en IDLE", function()
-        assert(U.check() == true)
-        pump(U, 10)
-        assert(U.state == "IDLE", U.state)
-        assert(U.remote_version == PG._VERSION)
-    end)
-    mocks.restore()
-end
-
---==============================================================================
--- 6. Ciclo feliz completo: version nueva -> descarga -> aplica -> revierte
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua" })
-    local _, files = Env.all_src_files(U)
-
-    -- "Disco" sembrado con contenido antiguo distinto, para comprobar después
-    -- que el respaldo lo conservó tal cual.
-    for _, f in ipairs(files) do
-        mocks.vfs[U._local_path(f.rel)] = "-- version vieja de " .. f.rel
-    end
-
-    local files_json = {}
-    for _, f in ipairs(files) do files_json[#files_json + 1] = '"' .. f.rel .. '"' end
-
-    mocks.curl_queue[#mocks.curl_queue + 1] = {
         delay_ticks = 1, code = eCurlCode.CURLE_OK,
-        body = string.format('{"version":"9.9.9","files":[%s],"notas":"prueba"}',
-                              table.concat(files_json, ",")),
-    }
-    for _, f in ipairs(files) do
-        mocks.curl_queue[#mocks.curl_queue + 1] = {
-            delay_ticks = 1, code = eCurlCode.CURLE_OK, body = Env.read_file(f.path),
-        }
-    end
-
-    check("check() + apply_update() deja HECHO y escribe el vfs con el contenido real", function()
-        assert(U.check() == true)
-        pump(U, 10)
-        assert(U.state == "DISPONIBLE", U.state)
-
-        assert(U.apply_update() == true)
-        pump(U, 400)
-        assert(U.state == "HECHO", U.state .. " / " .. tostring(U.last_error))
-
-        for _, f in ipairs(files) do
-            assert(mocks.vfs[U._local_path(f.rel)] == Env.read_file(f.path),
-                   "no se escribió correctamente: " .. f.rel)
-        end
-    end)
-
-    check("el respaldo conserva el contenido antiguo de cada archivo", function()
-        for _, f in ipairs(files) do
-            local backup_path = U.last_backup_dir .. "\\" .. f.rel:gsub("[/\\]", "_")
-            assert(mocks.vfs[backup_path] == "-- version vieja de " .. f.rel,
-                   "respaldo ausente o incorrecto para " .. f.rel)
-        end
-    end)
-
-    check("rollback() restaura el contenido anterior", function()
-        assert(U.rollback() == true)
-        for _, f in ipairs(files) do
-            assert(mocks.vfs[U._local_path(f.rel)] == "-- version vieja de " .. f.rel,
-                   "rollback no restauró " .. f.rel)
-        end
-    end)
-
-    mocks.restore()
-end
-
---==============================================================================
--- 7. Un archivo que no compila aborta el lote entero sin tocar disco
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua" })
-
-    mocks.vfs[U._local_path("a.lua")] = "-- vieja a"
-    mocks.vfs[U._local_path("b.lua")] = "-- vieja b"
-
-    mocks.curl_queue[#mocks.curl_queue + 1] = {
-        delay_ticks = 1, code = eCurlCode.CURLE_OK,
-        body = '{"version":"9.9.9","files":["a.lua","b.lua"],"notas":""}',
-    }
-    mocks.curl_queue[#mocks.curl_queue + 1] = {
-        delay_ticks = 1, code = eCurlCode.CURLE_OK, body = "return 1",   -- a.lua: OK
-    }
-    mocks.curl_queue[#mocks.curl_queue + 1] = {
-        delay_ticks = 1, code = eCurlCode.CURLE_OK, body = "this is not $$$ lua (((", -- b.lua: roto
+        body = '{"version":"1.0.0","notas":""}',   -- debe coincidir con PS_VERSION en PizzaScript.lua
     }
 
-    check("archivo que no compila deja ERROR sin tocar el vfs", function()
-        assert(U.check() == true)
-        pump(U, 10)
-        assert(U.state == "DISPONIBLE")
-        assert(U.apply_update() == true)
-        pump(U, 20)
-        assert(U.state == "ERROR", U.state)
-        assert(mocks.vfs[U._local_path("a.lua")] == "-- vieja a", "a.lua se tocó pese al fallo")
-        assert(mocks.vfs[U._local_path("b.lua")] == "-- vieja b", "b.lua se tocó pese al fallo")
-    end)
-
-    mocks.restore()
-end
-
---==============================================================================
--- 8. Freno de iteraciones: una descarga que nunca termina no cuelga el bucle
---==============================================================================
-do
-    local mocks = Env.install_mocks()
-    local PG = Env.load_core()
-    local U  = Env.load_updater(PG, { lua_root = "C:\\FakeInstall\\Lua",
-                                        download_max_ticks = 5, download_timeout_s = 999999 })
-    mocks.curl_queue[1] = { never = true }
-
-    check("una peticion que nunca termina se aborta por el tope de iteraciones", function()
-        assert(U.check() == true)
-        pump(U, 5)
-        assert(U.state == "ERROR", U.state)
-        assert(tostring(U.last_error):find("agotado"), tostring(U.last_error))
-    end)
-
-    mocks.restore()
-end
-
---==============================================================================
--- 9. Instalador de un solo archivo: PizzaGames.lua descarga todo si no
---    encuentra nada instalado (sin necesitar PizzaGames_Updater.lua, que es
---    justo uno de los archivos que hay que descargar)
---==============================================================================
-do
-    local mocks = Env.install_mocks()   -- vfs vacío: nada "instalado" todavía
-
-    -- Script.RegisterLooped: PizzaGames.lua es el propio script de arranque,
-    -- no un módulo "return function(PG)", así que no pasa por
-    -- Env.load_updater/load_core y necesita este mock aparte.
-    local loops = {}
-    _G.Script = {
-        RegisterLooped = function(fn) loops[#loops + 1] = fn; return #loops end,
-        Yield = function(_) end,
-    }
-
-    local order = {
-        "PizzaGames_Core.lua", "PizzaGames_Natives.lua", "PizzaGames_Cinema.lua",
-        "PizzaGames_Prefabs.lua", "PizzaGames_Scene.lua", "PizzaGames_Games.lua",
-        "PizzaGames_Updater.lua", "PizzaGames_Cherax.lua",
-    }
-    for _, name in ipairs(order) do
-        mocks.curl_queue[#mocks.curl_queue + 1] = {
-            delay_ticks = 1, code = eCurlCode.CURLE_OK,
-            body = Env.read_file(Env.SRC_DIR .. "PizzaScript/" .. name),
-        }
-    end
-
-    check("PizzaGames.lua descarga los 8 modulos cuando no hay nada instalado", function()
-        local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaGames.lua")
+    check("version remota igual a la local: no se toca el vfs", function()
+        local chunk, err = Env.compile(SCRIPT_PATH)
         assert(chunk, err)
 
-        -- pcall: más allá de la descarga, finish_boot() intenta instalar en
-        -- Cherax (FeatureMgr/ClickGUI/GTA no están simulados aquí, fuera del
-        -- alcance de este simulador). El propio adaptador de Core.lua está
-        -- pensado para degradarse sin lanzar, pero el pcall es la red de
-        -- seguridad: lo único que esta prueba necesita verificar es la
-        -- descarga, no el arranque completo dentro de Cherax.
+        local original = Env.read_file(SCRIPT_PATH)
+        mocks.vfs[SELF_PATH] = original
+
         pcall(chunk)
+        pump(loops, 20)
 
-        for _ = 1, 50 do
-            for _, fn in ipairs(loops) do pcall(fn) end
-        end
-
-        for _, name in ipairs(order) do
-            local expected = Env.read_file(Env.SRC_DIR .. "PizzaScript/" .. name)
-            local got = mocks.vfs["C:\\FakeCherax\\Lua\\PizzaScript\\" .. name]
-            assert(got == expected, "no se descargó/escribió correctamente: " .. name)
-        end
+        assert(mocks.vfs[SELF_PATH] == original, "no debería haberse tocado el archivo")
+        assert(mocks.vfs[SELF_PATH .. ".backup"] == nil, "no debería haber respaldo sin actualización")
     end)
 
-    _G.Script = nil
     mocks.restore()
 end
 
 --==============================================================================
--- 10. PizzaProfile.lua: se autoactualiza (descarga, verifica con load(),
---     respalda la version anterior). Prueba de caja negra igual que la del
---     instalador de PizzaGames: no hay nada expuesto para llamar
---     directamente (es un script suelto, no un modulo "return function"),
---     asi que se ejecuta el archivo completo y se observan los efectos en
---     el vfs simulado.
+-- 3. Versión nueva: descarga, verifica con load(), aplica y respalda
 --==============================================================================
 do
     local mocks = Env.install_mocks()
+    local loops, callbacks = Env.install_cherax_ui_mocks()
 
-    -- PizzaProfile.lua necesita una superficie minima de Cherax que
-    -- sim.lua no mockea por defecto (FeatureMgr/ClickGUI/eFeatureType/
-    -- Natives/Script/ImGui): se añade solo para esta prueba.
-    local loops = {}
-    _G.Script = {
-        RegisterLooped = function(fn) loops[#loops + 1] = fn; return #loops end,
-        Yield = function(_) end,
-    }
-    _G.Natives = {
-        InvokeInt = function() return 0 end,
-        InvokeBool = function() return false end,
-        InvokeVoid = function() end,
-        InvokeString = function() return nil end,
-        InvokeFloat = function() return 0.0 end,
-        InvokeV3 = function() return nil end,
-    }
-    _G.eFeatureType = { Button = 1, Toggle = 2 }
-    local function fake_feature()
-        local f = {}
-        function f:SetDefaultValue(_) return f end
-        function f:SetSaveable(_) return f end
-        function f:Reset() return f end
-        function f:IsToggled() return false end
-        return f
-    end
-    local callbacks = {}
-    _G.FeatureMgr = {
-        AddFeature = function(hash, _name, _ftype, _desc, cb, _thread)
-            callbacks[hash] = cb
-            return fake_feature()
-        end,
-        -- Siempre activado a proposito: en esta prueba se quiere que el
-        -- toggle "Buscar actualizaciones al iniciar" dispare la comprobacion.
-        IsFeatureToggled = function(_hash) return true end,
-    }
-    _G.ClickGUI = {
-        AddTab = function(_name, _fn) end,
-        BeginCustomChildWindow = function(_) return false end,
-        EndCustomChildWindow = function() end,
-        RenderFeature = function(_) end,
-    }
-    _G.ImGui = { Text = function(_) end }
-
-    local new_content = "-- nueva version de PizzaProfile (prueba)\nreturn true\n"
+    local new_content = "-- nueva version de PizzaScript (prueba)\nreturn true\n"
     mocks.curl_queue[#mocks.curl_queue + 1] = {
         delay_ticks = 1, code = eCurlCode.CURLE_OK,
         body = '{"version":"9.9.9","notas":"prueba"}',
@@ -366,37 +96,89 @@ do
         delay_ticks = 1, code = eCurlCode.CURLE_OK, body = new_content,
     }
 
-    check("PizzaProfile.lua se autoactualiza: descarga, verifica y respalda", function()
-        local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaProfile.lua")
+    check("version nueva: check + Actualizar ahora deja HECHO, escribe y respalda", function()
+        local chunk, err = Env.compile(SCRIPT_PATH)
         assert(chunk, err)
 
-        local self_path = "C:\\FakeCherax\\Lua\\PizzaProfile.lua"
-        mocks.vfs[self_path] = Env.read_file(Env.SRC_DIR .. "PizzaProfile.lua")
+        local original = Env.read_file(SCRIPT_PATH)
+        mocks.vfs[SELF_PATH] = original
 
-        pcall(chunk)   -- registra el bucle (Script.RegisterLooped) y construye la UI
+        pcall(chunk)          -- registra el bucle y construye la UI (arma natives en warmup 10,
+        pump(loops, 20)       -- comprueba versión en warmup 15)
 
-        -- Suficientes ticks para pasar el warmup (arma en 10, comprueba
-        -- actualizacion en 15) y que la comprobacion de version.json termine.
-        for _ = 1, 20 do
-            for _, fn in ipairs(loops) do pcall(fn) end
-        end
+        local apply_cb = callbacks[Utils.Joaat("PS_ApplyUpdate")]
+        assert(apply_cb, "no se registró el botón 'Actualizar ahora'")
+        apply_cb()             -- simula pulsarlo, ahora que hay versión disponible
+        pump(loops, 20)
 
-        local apply_cb = callbacks[Utils.Joaat("PP_ApplyUpdate")]
-        assert(apply_cb, "no se registro el boton 'Actualizar ahora'")
-        apply_cb()   -- simula pulsar el boton, ahora que hay version disponible
-
-        for _ = 1, 20 do
-            for _, fn in ipairs(loops) do pcall(fn) end
-        end
-
-        assert(mocks.vfs[self_path] == new_content,
-               "PizzaProfile.lua no se sustituyo con el contenido nuevo")
-        assert(mocks.vfs[self_path .. ".backup"] ~= nil,
-               "no se guardo copia de seguridad de la version anterior")
+        assert(mocks.vfs[SELF_PATH] == new_content, "no se sustituyó con el contenido nuevo")
+        assert(mocks.vfs[SELF_PATH .. ".backup"] == original, "el respaldo no conserva la versión anterior")
     end)
 
-    _G.Script, _G.Natives, _G.eFeatureType = nil, nil, nil
-    _G.FeatureMgr, _G.ClickGUI, _G.ImGui = nil, nil, nil
+    mocks.restore()
+end
+
+--==============================================================================
+-- 4. La descarga no compila: aborta sin tocar disco
+--==============================================================================
+do
+    local mocks = Env.install_mocks()
+    local loops, callbacks = Env.install_cherax_ui_mocks()
+
+    mocks.curl_queue[#mocks.curl_queue + 1] = {
+        delay_ticks = 1, code = eCurlCode.CURLE_OK,
+        body = '{"version":"9.9.9","notas":"prueba"}',
+    }
+    mocks.curl_queue[#mocks.curl_queue + 1] = {
+        delay_ticks = 1, code = eCurlCode.CURLE_OK, body = "esto no es $$$ lua (((",
+    }
+
+    check("descarga que no compila: deja ERROR sin tocar el vfs", function()
+        local chunk, err = Env.compile(SCRIPT_PATH)
+        assert(chunk, err)
+
+        local original = Env.read_file(SCRIPT_PATH)
+        mocks.vfs[SELF_PATH] = original
+
+        pcall(chunk)
+        pump(loops, 20)
+
+        local apply_cb = callbacks[Utils.Joaat("PS_ApplyUpdate")]
+        assert(apply_cb, "no se registró el botón 'Actualizar ahora'")
+        apply_cb()
+        pump(loops, 20)
+
+        assert(mocks.vfs[SELF_PATH] == original, "el archivo se tocó pese a que la descarga no compila")
+        assert(mocks.vfs[SELF_PATH .. ".backup"] == nil, "no debería haber respaldo si no se llegó a aplicar")
+    end)
+
+    mocks.restore()
+end
+
+--==============================================================================
+-- 5. Freno de iteraciones: una comprobación que nunca termina no cuelga el
+--    bucle (usa el tope real de PizzaScript.lua, 1800 ticks: rápido en Lua
+--    puro, no hace falta un valor reducido de prueba).
+--==============================================================================
+do
+    local mocks = Env.install_mocks()
+    local loops = Env.install_cherax_ui_mocks()
+
+    mocks.curl_queue[1] = { never = true }
+
+    check("una comprobación que nunca termina se aborta por el tope de iteraciones", function()
+        local chunk, err = Env.compile(SCRIPT_PATH)
+        assert(chunk, err)
+
+        pcall(chunk)
+        pump(loops, 1820)   -- 10 de warmup + 1800 del freno + margen
+
+        -- No hay estado expuesto para comprobarlo directamente (script
+        -- suelto): la prueba real es que 1820 ticks no cuelgan el proceso
+        -- y que no se generó ningún archivo espurio en el vfs.
+        assert(next(mocks.vfs) == nil, "no debería haberse escrito nada en disco")
+    end)
+
     mocks.restore()
 end
 

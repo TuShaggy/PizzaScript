@@ -1,15 +1,4 @@
 {
-  "version": "1.1.0",
-  "files": [
-    "PizzaGames.lua",
-    "PizzaScript/PizzaGames_Core.lua",
-    "PizzaScript/PizzaGames_Natives.lua",
-    "PizzaScript/PizzaGames_Cherax.lua",
-    "PizzaScript/PizzaGames_Cinema.lua",
-    "PizzaScript/PizzaGames_Scene.lua",
-    "PizzaScript/PizzaGames_Prefabs.lua",
-    "PizzaScript/PizzaGames_Games.lua",
-    "PizzaScript/PizzaGames_Updater.lua"
-  ],
-  "notas": "PizzaGames.lua ahora es un instalador de un solo archivo: si no encuentra los demas modulos en disco, los descarga solo desde este repositorio antes de arrancar."
+  "version": "1.0.0",
+  "notas": "Primera version de PizzaScript: menu de perfil offline (personaje actual, progreso de historia, stats por personaje) y online (apodo, estado de conexion), guardado en un archivo con el nombre online."
 }

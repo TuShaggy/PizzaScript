@@ -1,32 +1,32 @@
 --[[
 ================================================================================
-  sim.lua — simulador mínimo de la API de Cherax, para probar PizzaGames
+  sim.lua — simulador mínimo de la API de Cherax, para probar PizzaScript.lua
   fuera de GTA con un intérprete Lua 5.4 normal.
 
-  Se reconstruyó desde cero para esta sesión (no existía antes, pese a que
-  PROYECTO.md lo mencionaba como si ya existiera). Cubre lo que necesita este
-  encargo: compilar los 9 archivos de /src y ejercitar la lógica del
-  auto-actualizador (PizzaGames_Updater.lua) sin tocar disco de verdad ni red
-  de verdad. NO simula FeatureMgr/ClickGUI/GTA/natives ni el ciclo de los
-  cuatro minijuegos — eso queda para una sesión futura si hace falta.
+  Cubre: compilar el script y ejercitar su lógica de auto-actualización
+  (descarga, verificación con load(), respaldo) sin tocar disco de verdad ni
+  red de verdad. NO simula lectura de stats/natives de verdad — eso sólo
+  puede confirmarse dentro del propio juego (ver la cabecera de
+  PizzaScript.lua para qué está verificado y qué no).
 
-  Uso:  local Env = require("sim")  (ejecutado desde la carpeta sim/, o con
-        el intérprete apuntando aquí)
+  Uso:  local Env = dofile("sim.lua")  (ejecutado desde la carpeta sim/, o
+        con el intérprete apuntando aquí)
 ================================================================================
 ]]
 
 local Env = {}
 
 -- Rutas relativas a la ubicación de este archivo, no al directorio de trabajo
--- actual: así `lua sim/sim.lua` y `cd sim && lua run_tests.lua` funcionan igual.
+-- actual: así `lua sim/run_tests.lua` y `cd sim && lua run_tests.lua`
+-- funcionan igual. Barra normal, no contrabarra: esto son rutas de disco
+-- reales que lee/compila el propio simulador (io.open/load), y tienen que
+-- funcionar igual en Windows (donde se desarrolla) que en el runner de CI
+-- (Linux, donde '\' no separa carpetas). Las rutas *dentro* de la
+-- simulación (vfs, GetMenuRootPath) sí usan '\', porque representan una
+-- instalación real de Cherax en Windows y el propio código bajo prueba las
+-- construye así.
 local SIM_DIR   = (debug.getinfo(1, "S").source:match("@?(.*[/\\])")) or "./"
 Env.SIM_DIR     = SIM_DIR
--- Barra normal, no contrabarra: esto son rutas de disco reales que
--- lee/compila el propio simulador (io.open/load), y tienen que funcionar
--- igual en Windows (donde se desarrolla) que en el runner de CI (Linux,
--- donde '\' no separa carpetas). Las rutas *dentro* de la simulación (vfs,
--- GetMenuRootPath) sí usan '\', porque representan una instalación real de
--- Cherax en Windows y el propio código bajo prueba las construye así.
 Env.REPO_ROOT   = SIM_DIR .. "../"
 Env.SRC_DIR     = Env.REPO_ROOT .. "src/"
 
@@ -40,7 +40,7 @@ end
 Env.read_file = read_file
 
 --==============================================================================
--- Mocks de la API global de Cherax
+-- Mocks de la API global de Cherax: FileMgr/Curl/GUI/Logger/Utils
 --==============================================================================
 
 --- Instala los mocks en _G. Devuelve un "handle" con inspección para los
@@ -121,46 +121,74 @@ function Env.install_mocks()
 end
 
 --==============================================================================
--- Carga de módulos reales
+-- Mocks de la superficie de Cherax que PizzaScript.lua necesita para
+-- arrancar (env_check exige FeatureMgr/ClickGUI/Utils/eFeatureType/Script/
+-- Natives): FeatureMgr/ClickGUI/eFeatureType/Natives/Script/ImGui. No están
+-- en install_mocks() porque las pruebas de auto-actualización son las
+-- únicas que necesitan que el script llegue a arrancar de verdad.
+--==============================================================================
+
+--- Devuelve (loops, callbacks, teardown). 'loops' recoge las funciones
+--- registradas con Script.RegisterLooped (para poder "avanzar frames" a
+--- mano); 'callbacks' permite invocar el callback de un botón por su hash,
+--- como si el usuario lo hubiera pulsado.
+function Env.install_cherax_ui_mocks()
+    local loops, callbacks = {}, {}
+
+    _G.Script = {
+        RegisterLooped = function(fn) loops[#loops + 1] = fn; return #loops end,
+        Yield = function(_) end,
+    }
+    _G.Natives = {
+        InvokeInt = function() return 0 end,
+        InvokeBool = function() return false end,
+        InvokeVoid = function() end,
+        InvokeString = function() return nil end,
+        InvokeFloat = function() return 0.0 end,
+        InvokeV3 = function() return nil end,
+    }
+    _G.eFeatureType = { Button = 1, Toggle = 2 }
+    _G.FeatureMgr = {
+        AddFeature = function(hash, _name, _ftype, _desc, cb, _thread)
+            callbacks[hash] = cb
+            local f = {}
+            function f:SetDefaultValue(_) return f end
+            function f:SetSaveable(_) return f end
+            function f:Reset() return f end
+            function f:IsToggled() return false end
+            return f
+        end,
+        -- Siempre activado a propósito: las pruebas quieren que el toggle
+        -- "buscar al iniciar" dispare la comprobación de versión.
+        IsFeatureToggled = function(_hash) return true end,
+    }
+    _G.ClickGUI = {
+        AddTab = function(_name, _fn) end,
+        BeginCustomChildWindow = function(_) return false end,
+        EndCustomChildWindow = function() end,
+        RenderFeature = function(_) end,
+    }
+    _G.ImGui = { Text = function(_) end }
+
+    local function teardown()
+        _G.Script, _G.Natives, _G.eFeatureType = nil, nil, nil
+        _G.FeatureMgr, _G.ClickGUI, _G.ImGui = nil, nil, nil
+    end
+
+    return loops, callbacks, teardown
+end
+
+--==============================================================================
+-- Compilación
 --==============================================================================
 
 --- Compila (NO ejecuta) el contenido de un archivo, igual que hace
---- PizzaGames.lua al cargar módulos y PizzaGames_Updater.lua al verificar
---- descargas. Devuelve (chunk) o (nil, error).
+--- PizzaScript.lua al verificar una descarga antes de sustituirse. Devuelve
+--- (chunk) o (nil, error).
 function Env.compile(path)
     local content, err = read_file(path)
     if not content then return nil, "no se pudo leer: " .. tostring(err) end
     return load(content, "@" .. path)
-end
-
---- Carga y ejecuta PizzaGames_Core.lua real para obtener un PG de verdad
---- (no un mock): Core.lua es Lua puro salvo por PG.now(), que ya degrada
---- solas a os.time() si no hay 'game_timer' resuelto, así que funciona
---- igual aquí que dentro de Cherax cuando faltan capacidades.
-function Env.load_core()
-    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript/PizzaGames_Core.lua")
-    if not chunk then error("PizzaGames_Core.lua no compila: " .. tostring(err)) end
-    return chunk()
-end
-
---- Carga PizzaGames_Updater.lua real y lo instancia contra un PG dado.
-function Env.load_updater(PG, opts)
-    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript/PizzaGames_Updater.lua")
-    if not chunk then error("PizzaGames_Updater.lua no compila: " .. tostring(err)) end
-    local factory = chunk()
-    return factory(PG, opts)
-end
-
---- Todos los archivos listados en version.json, ruta completa dentro de /src.
-function Env.all_src_files(U)
-    local body = read_file(Env.REPO_ROOT .. "version.json")
-    assert(body, "no se pudo leer version.json")
-    local version, files = U.parse_version_json(body)
-    local out = {}
-    for _, rel in ipairs(files) do
-        out[#out + 1] = { rel = rel, path = Env.SRC_DIR .. rel }
-    end
-    return version, out
 end
 
 return Env

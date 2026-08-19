@@ -1,14 +1,13 @@
 --[[
 ================================================================================
-  PizzaProfile  v1.0.0
-  Menú de perfil de jugador para Cherax (GTA V). Un solo archivo: núcleo,
-  lectura de stats, guardado y UI juntos — a propósito, porque esta
-  herramienta no tiene minijuegos ni máquina de estados que justifique
-  separar en módulos (a diferencia de PizzaGames, que se queda intacto en
-  este mismo repo por si se retoma más adelante).
+  PizzaScript  v1.0.0
+  Herramienta para Cherax (GTA V) en un solo archivo. Por ahora: un menú de
+  perfil de jugador (offline + online). La idea es ir añadiendo apartados
+  nuevos aquí mismo con el tiempo, no crear archivos sueltos por función —
+  núcleo, lectura de datos, guardado y UI conviven en este único script a
+  propósito.
 
-  QUÉ ESTÁ VERIFICADO Y QUÉ NO (no se inventa nada de esto — ver
-  docs/PROYECTO.md para el porqué de esta regla)
+  QUÉ ESTÁ VERIFICADO Y QUÉ NO (no se inventa nada de esto)
   --------------------------------------------------------------------------
   Verificado contra fuentes reales (LCPDFR NativeDB, el natives-one.lua real
   de SATTY91/Cherax-Lua-API-Documentation, y un script decompilado real de
@@ -32,15 +31,23 @@
       agregados).
     - Dinero o rango de GTA Online (ningún stat confirmado).
 
-  Zona gris, "sin verificar en juego" (mismo trato que ya tiene
-  Prefabs.ROAD_MODELS en el PizzaGames original): la firma exacta de los
-  natives STAT_GET_* cuando se invocan crudos. Por eso este archivo SIEMPRE
-  intenta primero el wrapper cómodo que documenta Cherax (STATS.STAT_GET_*,
+  Zona gris, "sin verificar en juego": la firma exacta de los natives
+  STAT_GET_* cuando se invocan crudos. Por eso este archivo SIEMPRE intenta
+  primero el wrapper cómodo que documenta Cherax (STATS.STAT_GET_*,
   NETWORK.*, PLAYER.*, PED.*, SC_GET_NICKNAME) y sólo cae a invocar por hash
   crudo en los pocos casos sin argumentos donde el hash y la firma están
   confirmados (PLAYER_PED_ID y los 4 NETWORK_IS_*/NETWORK_HAS_*). Si un
   valor no está disponible, el panel dice "no disponible" — nunca se
   arriesga una llamada con una firma que no está confirmada.
+
+  Reglas que se mantienen en cualquier apartado que se añada aquí:
+    - Las natives sólo se llaman una vez armadas (ver 'armed' más abajo):
+      el cuerpo del script corre en otro hilo al cargar, y tocar natives
+      ahí cierra GTA sin dejar rastro en el log.
+    - Toda espera de red lleva dos frenos independientes (tiempo + tope de
+      iteraciones), nunca uno solo.
+    - Nunca se sustituye un archivo en disco sin verificar antes que el
+      contenido nuevo compila con load().
 
   Uso: coloca este archivo (él solo) en Documents\Cherax\Lua\ y ejecútalo
   desde el Lua Editor.
@@ -51,14 +58,13 @@
 -- Configuración
 --==============================================================================
 
-local PV_VERSION = "1.0.0"
-local REPO_RAW    = "https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/"
-local VERSION_URL = REPO_RAW .. "profile-version.json"
-local FILE_URL    = REPO_RAW .. "src/PizzaProfile.lua"
+local PS_VERSION  = "1.0.0"
+local REPO_RAW     = "https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/"
+local VERSION_URL  = REPO_RAW .. "version.json"
+local FILE_URL     = REPO_RAW .. "src/PizzaScript.lua"
 
 --==============================================================================
--- Log ligero (sin las 4 capas de PizzaGames_Core.lua: aquí no hace falta
--- Runtime/Resources, no hay minijuego que gestionar)
+-- Log ligero
 --==============================================================================
 
 local Log = {}
@@ -70,7 +76,7 @@ do
             local ok, f = pcall(string.format, fmt, ...)
             msg = ok and f or fmt
         end
-        local line = string.format("[PizzaProfile][%s][%-5s][%s] %s", ts(), level, tag, msg)
+        local line = string.format("[PizzaScript][%s][%-5s][%s] %s", ts(), level, tag, msg)
         print(line)
         if Logger then
             if level == "ERROR" then Logger.LogError(line)
@@ -100,17 +106,17 @@ if FileMgr and FileMgr.GetMenuRootPath then
     local root = FileMgr.GetMenuRootPath()
     if root and root ~= "" then home_dir = join(root, "Lua") end
 end
-local self_path = home_dir and join(home_dir, "PizzaProfile.lua") or nil
+local self_path = home_dir and join(home_dir, "PizzaScript.lua") or nil
 
 local function profiles_dir()
-    return home_dir and join(home_dir, "PizzaProfile_Profiles") or "PizzaProfile_Profiles"
+    return home_dir and join(home_dir, "PizzaScript_Profiles") or "PizzaScript_Profiles"
 end
 
 --==============================================================================
 -- Estado
 --==============================================================================
 
-local armed      = false   -- barrera de hilo: ver PizzaGames_Natives.lua trampa 5.1
+local armed      = false   -- barrera de hilo: las natives sólo funcionan en el hilo de script
 local show_panel = false
 local profile    = { offline = nil, online = nil }
 local UPD        = { state = "IDLE", remote_version = nil, last_error = nil,
@@ -130,7 +136,7 @@ local function cap_player_ped_id()
         local ok, v = pcall(PLAYER.PLAYER_PED_ID)
         if ok then return v end
     end
-    local ok, v = pcall(Natives.InvokeInt, 0xD80958FC74E988A6)   -- confirmado, ya en uso en PizzaGames_Natives.lua
+    local ok, v = pcall(Natives.InvokeInt, 0xD80958FC74E988A6)   -- confirmado
     if ok then return v end
     return nil
 end
@@ -207,12 +213,12 @@ local function cap_sc_nickname()
 end
 
 --==============================================================================
--- Dibujo en pantalla (mismo mecanismo ya verificado y en uso en
--- PizzaGames_Natives.lua: DRAW_RECT + la secuencia SET_TEXT_*/BEGIN_TEXT_*.
--- Aquí vive el look "cyberpunk": no hay constancia de que Cherax exponga
--- temas/colores para los widgets normales de FeatureMgr/ClickGUI, así que
--- el panel de información se dibuja a mano con colores neón, y los botones
--- reales quedan en una pestaña normal de Cherax (ver build_ui).
+-- Dibujo en pantalla (DRAW_RECT + la secuencia SET_TEXT_*/BEGIN_TEXT_*, con
+-- hashes ya verificados). Aquí vive el look "cyberpunk": no hay constancia
+-- de que Cherax exponga temas/colores para los widgets normales de
+-- FeatureMgr/ClickGUI, así que el panel de información se dibuja a mano con
+-- colores neón, y los botones reales quedan en una pestaña normal de
+-- Cherax (ver build_ui).
 --==============================================================================
 
 local function n_draw_rect(x, y, w, h, r, g, b, a)
@@ -240,7 +246,7 @@ local COLOR_MAGENTA = { 255, 25, 160 }
 local function render_hud()
     if not show_panel or not armed then return end
 
-    local lines = { { text = "P I Z Z A P R O F I L E", color = COLOR_MAGENTA, scale = 0.42 } }
+    local lines = { { text = "P I Z Z A S C R I P T", color = COLOR_MAGENTA, scale = 0.42 } }
 
     if profile.online then
         local o = profile.online
@@ -257,7 +263,7 @@ local function render_hud()
     end
 
     if not profile.online and not profile.offline then
-        lines[#lines + 1] = { text = "Pulsa 'Cargar perfil' en la pestaña PizzaProfile", color = COLOR_CYAN, scale = 0.3 }
+        lines[#lines + 1] = { text = "Pulsa 'Cargar perfil' en la pestaña PizzaScript", color = COLOR_CYAN, scale = 0.3 }
     end
 
     local x, y, row_h = 0.14, 0.10, 0.03
@@ -269,7 +275,7 @@ local function render_hud()
 end
 
 --==============================================================================
--- Lectura de perfil
+-- Apartado: perfil de jugador
 --==============================================================================
 
 local CHAR_MODELS = {
@@ -281,7 +287,7 @@ local CHAR_MODELS = {
 local function read_offline()
     if not armed then
         Log.warn("Perfil", "Natives aún no armadas, espera un momento y vuelve a intentarlo")
-        if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Espera un momento, el script se está preparando", 3000) end
+        if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Espera un momento, el script se está preparando", 3000) end
         return nil
     end
 
@@ -332,7 +338,7 @@ end
 local function read_online()
     if not armed then
         Log.warn("Perfil", "Natives aún no armadas, espera un momento y vuelve a intentarlo")
-        if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Espera un momento, el script está preparándose", 3000) end
+        if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Espera un momento, el script está preparándose", 3000) end
         return nil
     end
 
@@ -351,10 +357,6 @@ local function read_online()
              tostring(data.apodo), tostring(data.conectado))
     return data
 end
-
---==============================================================================
--- Guardado
---==============================================================================
 
 local function sanitize_filename(s)
     if not s or s == "" then return nil end
@@ -419,7 +421,7 @@ end
 local function save_profile()
     if not (profile.offline or profile.online) then
         Log.warn("Perfil", "Nada que guardar todavía: pulsa 'Cargar perfil' primero")
-        if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Nada que guardar todavía", 4000) end
+        if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Nada que guardar todavía", 4000) end
         return false
     end
     if not (FileMgr and FileMgr.WriteFileContent) then
@@ -437,25 +439,25 @@ local function save_profile()
 
     FileMgr.WriteFileContent(path, build_save_lines())
     Log.info("Perfil", "Guardado en: %s", path)
-    if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Perfil guardado: " .. nombre, 5000) end
+    if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Perfil guardado: " .. nombre, 5000) end
     return true
 end
 
 --==============================================================================
--- Auto-actualización de un solo archivo — versión reducida de
--- PizzaGames_Updater.lua (mismo principio: descargar, verificar con load()
--- antes de tocar disco, respaldar). No hace falta lista de archivos ni
--- estado DESCARGANDO por lotes: aquí sólo hay uno.
+-- Auto-actualización de un solo archivo: descarga la última versión de sí
+-- mismo, verifica con load() antes de tocar disco, respalda la versión
+-- anterior. No hace falta lista de archivos ni estado por lotes: aquí sólo
+-- hay uno.
 --==============================================================================
 
-local DL_TIMEOUT_S, DL_MAX_TICKS = 15, 1800   -- dos frenos independientes, trampa 5.4
+local DL_TIMEOUT_S, DL_MAX_TICKS = 15, 1800   -- dos frenos independientes
 
 local function start_request(url)
     if not (Curl and Curl.Easy) then return nil end
     local ok, c = pcall(function()
         local h = Curl.Easy()
         h:Setopt(eCurlOption.CURLOPT_URL, url)
-        h:Setopt(eCurlOption.CURLOPT_USERAGENT, "PizzaProfile")
+        h:Setopt(eCurlOption.CURLOPT_USERAGENT, "PizzaScript")
         h:Perform()
         return h
     end)
@@ -466,7 +468,7 @@ end
 local function upd_fail(msg)
     UPD.state, UPD.last_error, UPD._curl = "ERROR", msg, nil
     Log.error("Update", "%s", msg)
-    if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Actualizador: " .. msg, 6000) end
+    if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Actualizador: " .. msg, 6000) end
 end
 
 local function version_gt(a, b)
@@ -495,7 +497,7 @@ function UPD.check()
     UPD.state, UPD._ticks, UPD._deadline = "CHECKING", 0, os.time()
     UPD._curl = start_request(VERSION_URL)
     if not UPD._curl then upd_fail("check: no se pudo iniciar la comprobación"); return false end
-    Log.info("Update", "Comprobando actualizaciones (versión local %s)", PV_VERSION)
+    Log.info("Update", "Comprobando actualizaciones (versión local %s)", PS_VERSION)
     return true
 end
 
@@ -515,16 +517,16 @@ local function pump_check()
     end
 
     local version = body:match('"version"%s*:%s*"([^"]+)"')
-    if not version then upd_fail("check: profile-version.json no se pudo interpretar"); return end
+    if not version then upd_fail("check: version.json no se pudo interpretar"); return end
 
     UPD.remote_version = version
-    if version_gt(version, PV_VERSION) then
+    if version_gt(version, PS_VERSION) then
         UPD.state = "DISPONIBLE"
-        Log.info("Update", "Actualización disponible: %s -> %s", PV_VERSION, version)
-        if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Actualización disponible: " .. version, 6000) end
+        Log.info("Update", "Actualización disponible: %s -> %s", PS_VERSION, version)
+        if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Actualización disponible: " .. version, 6000) end
     else
         UPD.state = "IDLE"
-        Log.info("Update", "Ya tienes la última versión (%s)", PV_VERSION)
+        Log.info("Update", "Ya tienes la última versión (%s)", PS_VERSION)
     end
 end
 
@@ -545,7 +547,7 @@ local function pump_download()
 
     -- Verificación no negociable: nunca se sustituye el script si el
     -- contenido descargado no compila.
-    local chunk, err = load(body, "@PizzaProfile.lua")
+    local chunk, err = load(body, "@PizzaScript.lua")
     if not chunk then upd_fail("descarga: el archivo nuevo no compila -> " .. tostring(err)); return end
 
     if not (FileMgr and FileMgr.WriteFileContent and self_path) then
@@ -559,8 +561,8 @@ local function pump_download()
     FileMgr.WriteFileContent(self_path, body)
 
     UPD.state = "HECHO"
-    Log.info("Update", "Actualizado a %s. Recarga PizzaProfile.lua desde el Lua Editor para aplicarlo.", UPD.remote_version)
-    if GUI and GUI.AddToast then GUI.AddToast("PizzaProfile", "Actualizado a " .. UPD.remote_version .. ". Recarga el script.", 8000) end
+    Log.info("Update", "Actualizado a %s. Recarga PizzaScript.lua desde el Lua Editor para aplicarlo.", UPD.remote_version)
+    if GUI and GUI.AddToast then GUI.AddToast("PizzaScript", "Actualizado a " .. UPD.remote_version .. ". Recarga el script.", 8000) end
 end
 
 function UPD.apply()
@@ -584,7 +586,7 @@ end
 --==============================================================================
 
 local function build_ui()
-    local h_load_off = Utils.Joaat("PP_LoadOffline")
+    local h_load_off = Utils.Joaat("PS_LoadOffline")
     FeatureMgr.AddFeature(h_load_off, "Cargar perfil (modo historia)", eFeatureType.Button,
         "Lee personaje actual, progreso de historia y estadísticas disponibles",
         function()
@@ -592,7 +594,7 @@ local function build_ui()
             if data then profile.offline = data end
         end, true)
 
-    local h_load_on = Utils.Joaat("PP_LoadOnline")
+    local h_load_on = Utils.Joaat("PS_LoadOnline")
     FeatureMgr.AddFeature(h_load_on, "Cargar perfil (cuenta online)", eFeatureType.Button,
         "Lee apodo de Social Club, estado de conexión y nombre de red",
         function()
@@ -600,29 +602,29 @@ local function build_ui()
             if data then profile.online = data end
         end, true)
 
-    local h_save = Utils.Joaat("PP_Save")
+    local h_save = Utils.Joaat("PS_Save")
     FeatureMgr.AddFeature(h_save, "Guardar perfil", eFeatureType.Button,
         "Guarda lo capturado hasta ahora en un archivo con tu nombre online",
         function() save_profile() end, true)
 
-    local h_panel = FeatureMgr.AddFeature(Utils.Joaat("PP_ShowPanel"), "Mostrar panel en pantalla",
+    local h_panel = FeatureMgr.AddFeature(Utils.Joaat("PS_ShowPanel"), "Mostrar panel en pantalla",
         eFeatureType.Toggle, "Panel con la información capturada",
         function(f) show_panel = f:IsToggled() end, false)
     if h_panel then h_panel:SetDefaultValue(true); h_panel:SetSaveable(true); h_panel:Reset() end
     show_panel = true
 
-    local h_boot = FeatureMgr.AddFeature(Utils.Joaat("PP_UpdateOnBoot"), "Buscar actualizaciones al iniciar",
+    local h_boot = FeatureMgr.AddFeature(Utils.Joaat("PS_UpdateOnBoot"), "Buscar actualizaciones al iniciar",
         eFeatureType.Toggle, "Comprueba automáticamente al cargar el script", function() end, false)
     if h_boot then h_boot:SetDefaultValue(true); h_boot:SetSaveable(true); h_boot:Reset() end
 
-    local h_checkupd = Utils.Joaat("PP_CheckUpdate")
+    local h_checkupd = Utils.Joaat("PS_CheckUpdate")
     FeatureMgr.AddFeature(h_checkupd, "Buscar actualizaciones", eFeatureType.Button, "",
         function() UPD.check() end, true)
-    local h_applyupd = Utils.Joaat("PP_ApplyUpdate")
+    local h_applyupd = Utils.Joaat("PS_ApplyUpdate")
     FeatureMgr.AddFeature(h_applyupd, "Actualizar ahora", eFeatureType.Button, "",
         function() UPD.apply() end, true)
 
-    ClickGUI.AddTab("PizzaProfile", function()
+    ClickGUI.AddTab("PizzaScript", function()
         if ClickGUI.BeginCustomChildWindow("Perfil") then
             ClickGUI.RenderFeature(h_load_off)
             ClickGUI.RenderFeature(h_load_on)
@@ -631,7 +633,7 @@ local function build_ui()
             ClickGUI.EndCustomChildWindow()
         end
         if ClickGUI.BeginCustomChildWindow("Actualizador") then
-            ImGui.Text(string.format("Local: %s   Estado: %s%s", PV_VERSION, UPD.state,
+            ImGui.Text(string.format("Local: %s   Estado: %s%s", PS_VERSION, UPD.state,
                        UPD.remote_version and ("   Remota: " .. UPD.remote_version) or ""))
             ClickGUI.RenderFeature(h_boot)
             ClickGUI.RenderFeature(h_checkupd)
@@ -664,12 +666,11 @@ local function install_loop()
         warmup = warmup + 1
         if warmup == 10 then
             -- Unos frames de margen para que el hilo de script esté
-            -- plenamente asentado antes de tocar cualquier native (trampa
-            -- 5.1 de PROYECTO.md).
+            -- plenamente asentado antes de tocar cualquier native.
             armed = true
             Log.info("Boot", "Natives armadas")
         end
-        if warmup == 15 and FeatureMgr.IsFeatureToggled(Utils.Joaat("PP_UpdateOnBoot")) then
+        if warmup == 15 and FeatureMgr.IsFeatureToggled(Utils.Joaat("PS_UpdateOnBoot")) then
             UPD.check()
         end
 
@@ -683,12 +684,12 @@ end
 if env_check() then
     build_ui()
     install_loop()
-    Log.info("Boot", "PizzaProfile v%s instalado. Pestaña 'PizzaProfile' en Lua Content.", PV_VERSION)
+    Log.info("Boot", "PizzaScript v%s instalado. Pestaña 'PizzaScript' en Lua Content.", PS_VERSION)
     if GUI and GUI.AddToast then
-        GUI.AddToast("PizzaProfile", "Cargado. Pestaña 'PizzaProfile' disponible.", 4000)
+        GUI.AddToast("PizzaScript", "Cargado. Pestaña 'PizzaScript' disponible.", 4000)
     end
 else
     if GUI and GUI.AddToast then
-        GUI.AddToast("PizzaProfile", "Fallo al cargar. Mira Cherax.log", 6000)
+        GUI.AddToast("PizzaScript", "Fallo al cargar. Mira Cherax.log", 6000)
     end
 end

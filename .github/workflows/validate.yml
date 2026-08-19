@@ -22,57 +22,18 @@ jobs:
       - name: Ejecutar sim/run_tests.lua
         run: lua5.4 sim/run_tests.lua
 
-      - name: version.json coincide con el paquete de PizzaGames
+      - name: version.json es JSON valido con "version"
         run: |
           set -e
           python3 - <<'PY'
-          # Sólo valida el paquete de PizzaGames (src/PizzaGames.lua +
-          # src/PizzaScript/*.lua). PizzaProfile.lua vive suelto en src/,
-          # es un proyecto aparte con su propio profile-version.json (sin
-          # lista de "files": es un solo archivo), y no debe contarse aquí.
-          import json, os, sys
+          import json, sys
 
           with open("version.json") as f:
               data = json.load(f)
 
-          missing = [p for p in data["files"] if not os.path.isfile(os.path.join("src", p))]
-          if missing:
-              print("version.json lista archivos que no existen en src/:", missing)
-              sys.exit(1)
-
-          on_disk = set()
-          if os.path.isfile(os.path.join("src", "PizzaGames.lua")):
-              on_disk.add("PizzaGames.lua")
-          for root, _dirs, files in os.walk(os.path.join("src", "PizzaScript")):
-              for name in files:
-                  if name.endswith(".lua"):
-                      rel = os.path.relpath(os.path.join(root, name), "src").replace(os.sep, "/")
-                      on_disk.add(rel)
-
-          extra = on_disk - set(data["files"])
-          if extra:
-              print("Archivos .lua del paquete PizzaGames que faltan en version.json:", sorted(extra))
-              sys.exit(1)
-
-          print("version.json (%s) coincide con el paquete PizzaGames: %d archivos" % (data["version"], len(data["files"])))
-          PY
-
-      - name: profile-version.json es JSON valido con "version"
-        run: |
-          set -e
-          python3 - <<'PY'
-          import json, os, sys
-
-          if not os.path.isfile(os.path.join("src", "PizzaProfile.lua")):
-              print("src/PizzaProfile.lua no existe, se omite esta comprobacion")
-              sys.exit(0)
-
-          with open("profile-version.json") as f:
-              data = json.load(f)
-
           if not data.get("version"):
-              print("profile-version.json no tiene 'version'")
+              print("version.json no tiene 'version'")
               sys.exit(1)
 
-          print("profile-version.json OK: version %s" % data["version"])
+          print("version.json OK: version %s" % data["version"])
           PY
