@@ -1,0 +1,52 @@
+name: Validar
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+
+      - name: Comprobar sintaxis de src/**/*.lua (luac -p)
+        run: |
+          set -e
+          find src -name '*.lua' -print0 | xargs -0 -n1 luac5.4 -p
+          echo "Todos los archivos de src/ compilan."
+
+      - name: Ejecutar sim/run_tests.lua
+        run: lua5.4 sim/run_tests.lua
+
+      - name: version.json coincide con los archivos de src/
+        run: |
+          set -e
+          python3 - <<'PY'
+          import json, os, sys
+
+          with open("version.json") as f:
+              data = json.load(f)
+
+          missing = [p for p in data["files"] if not os.path.isfile(os.path.join("src", p))]
+          if missing:
+              print("version.json lista archivos que no existen en src/:", missing)
+              sys.exit(1)
+
+          on_disk = set()
+          for root, _dirs, files in os.walk("src"):
+              for name in files:
+                  if name.endswith(".lua"):
+                      rel = os.path.relpath(os.path.join(root, name), "src").replace(os.sep, "/")
+                      on_disk.add(rel)
+
+          extra = on_disk - set(data["files"])
+          if extra:
+              print("Archivos .lua en src/ que faltan en version.json:", sorted(extra))
+              sys.exit(1)
+
+          print("version.json (%s) coincide con src/: %d archivos" % (data["version"], len(data["files"])))
+          PY

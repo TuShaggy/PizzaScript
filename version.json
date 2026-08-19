@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "files": [
+    "PizzaGames.lua",
+    "PizzaScript/PizzaGames_Core.lua",
+    "PizzaScript/PizzaGames_Natives.lua",
+    "PizzaScript/PizzaGames_Cherax.lua",
+    "PizzaScript/PizzaGames_Cinema.lua",
+    "PizzaScript/PizzaGames_Scene.lua",
+    "PizzaScript/PizzaGames_Prefabs.lua",
+    "PizzaScript/PizzaGames_Games.lua",
+    "PizzaScript/PizzaGames_Updater.lua"
+  ],
+  "notas": "Primera version con auto-actualizador. Reorganizacion en repositorio, sin cambios de jugabilidad."
+}
