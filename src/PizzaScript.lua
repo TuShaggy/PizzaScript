@@ -129,6 +129,10 @@ local armed        = false   -- barrera de hilo: las natives sólo funcionan en 
 local show_panel   = false
 local profile      = { offline = nil, online = nil }
 local current_mode = nil     -- "online" | "offline" | nil (aún sin detectar)
+-- Si se consigue enganchar el dibujo a eCallbackTrigger.OnTick (ver
+-- build_ui), install_loop() deja de llamar a render_hud() por su cuenta
+-- para no dibujar dos veces por frame.
+local render_via_ontick = false
 local UPD          = { state = "IDLE", remote_version = nil, last_error = nil,
                          _curl = nil, _ticks = 0, _deadline = nil }
 
@@ -431,13 +435,21 @@ local function read_online()
     -- (int "empaquetado" por ID, o memoria de variables globales del
     -- script del juego con offsets que dependen de la versión exacta de
     -- GTA) — no se implementan para no arriesgar un dato incorrecto.
-    data.rango       = cap_stat_int("CHAR_RANK_FM")
-    data.experiencia = cap_stat_int("CHAR_XP_FM")
+    -- Probado en juego: estos stats devuelven -1 como centinela de "sin
+    -- datos" en vez de nil (no hay confirmación de por qué — quizás el
+    -- perfil de personaje MP no está del todo cargado, o el nombre de stat
+    -- necesita algo más que no se ha confirmado). Un -1 no es un rango o
+    -- una popularidad real, así que se trata igual que "no disponible" en
+    -- vez de mostrar un número que confundiría más que ayudar.
+    local function positive_or_nil(v) return (type(v) == "number" and v >= 0) and v or nil end
+
+    data.rango       = positive_or_nil(cap_stat_int("CHAR_RANK_FM"))
+    data.experiencia = positive_or_nil(cap_stat_int("CHAR_XP_FM"))
     -- MPX_CLUB_POPULARITY es un entero en escala 0-1000 (según la fuente,
     -- coincide con el medidor de 0-100% que se ve en el juego) — se
     -- convierte a porcentaje aquí; si el juego no lo confirma así, el
     -- número seguirá siendo el dato crudo, sólo mal escalado.
-    local popularidad_bruta = cap_stat_int("MPX_CLUB_POPULARITY")
+    local popularidad_bruta = positive_or_nil(cap_stat_int("MPX_CLUB_POPULARITY"))
     data.popularidad_local = popularidad_bruta and fmt_num(popularidad_bruta / 10) or nil
 
     Log.info("Perfil", "Perfil online capturado (nombre: %s, conectado: %s, en línea: %s, rango: %s)",
@@ -696,6 +708,29 @@ local function build_ui()
         "Guarda lo capturado hasta ahora en un archivo con tu nombre online",
         function() save_profile() end, true)
 
+    -- Experimento contra el parpadeo del panel: lo que se dibuja en
+    -- pantalla hay que repintarlo cada frame de RENDER, y Script.RegisterLooped
+    -- puede no estar sincronizado 1:1 con el render (podría ir a un ritmo de
+    -- lógica de juego distinto). eCallbackTrigger.OnTick es el gancho que
+    -- Cherax documenta específicamente para esto. Protegido con pcall: si
+    -- el método no existe en esta build, se seguirá dibujando desde el
+    -- bucle principal como hasta ahora (peor, pero sin romper nada).
+    local f_render_driver = FeatureMgr.AddFeature(Utils.Joaat("PS_RenderDriver"), "",
+        eFeatureType.Button, "", function() pcall(render_hud) end, true)
+    if f_render_driver and f_render_driver.RegisterCallbackTrigger and eCallbackTrigger and eCallbackTrigger.OnTick then
+        local hooked = pcall(function()
+            f_render_driver:RegisterCallbackTrigger(eCallbackTrigger.OnTick)
+        end)
+        if hooked then
+            render_via_ontick = true
+            Log.info("Boot", "Panel enganchado a eCallbackTrigger.OnTick")
+        else
+            Log.warn("Boot", "RegisterCallbackTrigger falló; el panel sigue dibujándose desde el bucle principal")
+        end
+    else
+        Log.warn("Boot", "RegisterCallbackTrigger no disponible en esta build; el panel sigue dibujándose desde el bucle principal")
+    end
+
     -- OJO: RenderFeature quiere el HASH (número), no el objeto Feature que
     -- devuelve AddFeature. Guardarlos en la misma variable fue el bug que
     -- mataba la corrutina de la pestaña en el primer frame ("cannot resume
@@ -859,7 +894,7 @@ local function install_loop()
         end
 
         pcall(UPD.tick)
-        pcall(render_hud)
+        if not render_via_ontick then pcall(render_hud) end   -- si no, ya lo dibuja el gancho OnTick
 
         Script.Yield()
     end)
