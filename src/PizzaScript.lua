@@ -90,6 +90,14 @@ do
     function Log.error(tag, fmt, ...) Log.write("ERROR", tag, fmt, ...) end
 end
 
+--- Redondea números a un máximo de decimales para mostrar/guardar (los
+--- stats de Cherax vienen con muchos decimales de coma flotante). Deja
+--- pasar cualquier otra cosa (nil, "no_disponible", etc.) sin tocar.
+local function fmt_num(v, decimals)
+    if type(v) ~= "number" then return v end
+    return tonumber(string.format("%." .. (decimals or 2) .. "f", v))
+end
+
 --==============================================================================
 -- Resolución de rutas
 --==============================================================================
@@ -117,11 +125,12 @@ end
 -- Estado
 --==============================================================================
 
-local armed      = false   -- barrera de hilo: las natives sólo funcionan en el hilo de script
-local show_panel = false
-local profile    = { offline = nil, online = nil }
-local UPD        = { state = "IDLE", remote_version = nil, last_error = nil,
-                       _curl = nil, _ticks = 0, _deadline = nil }
+local armed        = false   -- barrera de hilo: las natives sólo funcionan en el hilo de script
+local show_panel   = false
+local profile      = { offline = nil, online = nil }
+local current_mode = nil     -- "online" | "offline" | nil (aún sin detectar)
+local UPD          = { state = "IDLE", remote_version = nil, last_error = nil,
+                         _curl = nil, _ticks = 0, _deadline = nil }
 
 --==============================================================================
 -- Natives / API de perfil. Nada de esto se llama si 'armed' es falso — eso
@@ -155,18 +164,30 @@ local function cap_local_player_id()
     return nil
 end
 
---- Best-effort: intenta leer ped.Model. No hay confirmación de que este
---- Cherax exponga esa propiedad ni de qué tipo devuelve — por eso todo va
---- protegido y se registra el tipo real recibido la primera vez, en vez de
---- asumir que es directamente comparable con un hash.
+--- Best-effort: prueba varios nombres de propiedad plausibles en el objeto
+--- CPed (Model/ModelHash/model — no hay confirmación de cuál es el real).
+--- Protegido con pcall y SIEMPRE deja constancia en el log de qué se probó
+--- y qué salió, para poder diagnosticar sin adivinar dos veces.
+local PED_MODEL_PROPS = { "Model", "ModelHash", "model" }
+
 local function cap_ped_model_hash(ped_obj)
-    if not ped_obj then return nil end
-    local ok, model = pcall(function() return ped_obj.Model end)
-    if not ok then return nil end
-    if type(model) == "number" then return model end
-    if model ~= nil then
-        Log.warn("Perfil", "ped.Model existe pero no es un número (es %s): %s", type(model), tostring(model))
+    if not ped_obj then
+        Log.warn("Perfil", "cap_ped_model_hash: no hay objeto CPed (GTA.GetLocalPed() falló o no existe)")
+        return nil
     end
+    for _, prop in ipairs(PED_MODEL_PROPS) do
+        local ok, val = pcall(function() return ped_obj[prop] end)
+        if ok and type(val) == "number" then
+            Log.info("Perfil", "ped.%s = %s (usado como hash de modelo)", prop, tostring(val))
+            return val
+        elseif ok and val ~= nil then
+            Log.warn("Perfil", "ped.%s existe pero no es un número (es %s): %s", prop, type(val), tostring(val))
+        elseif not ok then
+            Log.warn("Perfil", "ped.%s no se pudo leer: %s", prop, tostring(val))
+        end
+    end
+    Log.warn("Perfil", "Ninguna de las propiedades probadas (%s) dio un modelo válido",
+             table.concat(PED_MODEL_PROPS, ", "))
     return nil
 end
 
@@ -200,6 +221,19 @@ local function cap_network_bool(hash)
     local ok, v = pcall(Natives.InvokeBool, hash)
     if ok then return v end
     return nil
+end
+
+--- Detecta si el modo actual es online u offline (NETWORK_IS_SIGNED_ONLINE,
+--- el mismo hash ya usado en read_online) y lo deja en 'current_mode' para
+--- que el panel muestre sólo la sección que corresponde — se llama
+--- periódicamente desde install_loop, no en cada frame.
+local function refresh_mode()
+    local en_linea = cap_network_bool(0x1077788E268557C2)
+    local new_mode = en_linea and "online" or "offline"
+    if new_mode ~= current_mode then
+        current_mode = new_mode
+        Log.info("Perfil", "Modo detectado: %s", current_mode)
+    end
 end
 
 --- Nombre del jugador local — vía Players.GetName(id), confirmado real.
@@ -259,24 +293,33 @@ local function render_hud()
 
     local lines = { { text = "P I Z Z A S C R I P T", color = COLOR_MAGENTA, scale = 0.42 } }
 
-    if profile.online then
-        local o = profile.online
-        -- Puede no ser tu apodo real: Cherax puede falsear el nombre de
-        -- sesión que reportan estos natives, por privacidad.
-        lines[#lines + 1] = { text = "SESIÓN: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
-        lines[#lines + 1] = { text = string.format("Conectado: %s | Social Club: %s | Host: %s",
-                                     tostring(o.conectado), tostring(o.cuenta_social_club), tostring(o.es_host)), color = COLOR_CYAN, scale = 0.3 }
-    end
-
-    if profile.offline then
-        local f = profile.offline
-        lines[#lines + 1] = { text = "PERSONAJE: " .. tostring(f.personaje_actual), color = COLOR_CYAN }
-        lines[#lines + 1] = { text = string.format("Historia: %s%%", tostring(f.historia_percent)), color = COLOR_CYAN }
-        lines[#lines + 1] = { text = string.format("Misiones: %s / %s", tostring(f.misiones_completadas), tostring(f.misiones_disponibles)), color = COLOR_CYAN, scale = 0.3 }
-    end
-
-    if not profile.online and not profile.offline then
-        lines[#lines + 1] = { text = "Pulsa 'Cargar perfil' en la pestaña PizzaScript", color = COLOR_CYAN, scale = 0.3 }
+    -- Se muestra SÓLO la sección del modo en el que estás ahora mismo
+    -- (detectado en vivo por refresh_mode()), no las dos apiladas: si
+    -- cambias de modo, el panel cambia solo sin que hagas nada, aunque
+    -- para refrescar los datos de ese modo sigue haciendo falta pulsar el
+    -- botón correspondiente una vez.
+    if current_mode == "online" then
+        if profile.online then
+            local o = profile.online
+            -- Puede no ser tu apodo real: Cherax puede falsear el nombre
+            -- de sesión que reportan estos natives, por privacidad.
+            lines[#lines + 1] = { text = "SESIÓN: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
+            lines[#lines + 1] = { text = string.format("Conectado: %s | Social Club: %s | Host: %s",
+                                         tostring(o.conectado), tostring(o.cuenta_social_club), tostring(o.es_host)), color = COLOR_CYAN, scale = 0.3 }
+        else
+            lines[#lines + 1] = { text = "En línea — pulsa 'Cargar perfil (cuenta online)'", color = COLOR_CYAN, scale = 0.3 }
+        end
+    elseif current_mode == "offline" then
+        if profile.offline then
+            local f = profile.offline
+            lines[#lines + 1] = { text = "PERSONAJE: " .. tostring(f.personaje_actual), color = COLOR_CYAN }
+            lines[#lines + 1] = { text = string.format("Historia: %s%%", tostring(f.historia_percent)), color = COLOR_CYAN }
+            lines[#lines + 1] = { text = string.format("Misiones: %s / %s", tostring(f.misiones_completadas), tostring(f.misiones_disponibles)), color = COLOR_CYAN, scale = 0.3 }
+        else
+            lines[#lines + 1] = { text = "Modo historia — pulsa 'Cargar perfil (modo historia)'", color = COLOR_CYAN, scale = 0.3 }
+        end
+    else
+        lines[#lines + 1] = { text = "Detectando modo de juego...", color = COLOR_CYAN, scale = 0.3 }
     end
 
     local x, y, row_h = 0.14, 0.10, 0.03
@@ -317,7 +360,7 @@ local function read_offline()
         end
     end
 
-    data.historia_percent          = cap_stat_float("total_progress_made")
+    data.historia_percent          = fmt_num(cap_stat_float("total_progress_made"))
     data.misiones_completadas      = cap_stat_int("num_missions_completed")
     data.misiones_disponibles      = cap_stat_int("num_missions_available")
     data.minijuegos_completados    = cap_stat_int("num_minigames_completed")
@@ -330,9 +373,9 @@ local function read_offline()
     data.eventos_disponibles       = cap_stat_int("num_rndevents_available")
     data.misc_completado           = cap_stat_int("num_misc_completed")
     data.misc_disponible           = cap_stat_int("num_misc_available")
-    data.percent_mision_historia   = cap_stat_float("percent_story_missions")
-    data.percent_mision_ambiente   = cap_stat_float("percent_ambient_missions")
-    data.percent_tareas            = cap_stat_float("percent_oddjobs")
+    data.percent_mision_historia   = fmt_num(cap_stat_float("percent_story_missions"))
+    data.percent_mision_ambiente   = fmt_num(cap_stat_float("percent_ambient_missions"))
+    data.percent_tareas            = fmt_num(cap_stat_float("percent_oddjobs"))
 
     data.por_personaje = {}
     for _, c in ipairs(CHAR_MODELS) do
@@ -340,7 +383,7 @@ local function read_offline()
             label = c.label,
             disparos = cap_stat_int(c.stat_prefix .. "_shots"),
             muertes  = cap_stat_int(c.stat_prefix .. "_deaths"),
-            distancia_conduccion = cap_stat_float(c.stat_prefix .. "_dist_driving_car"),
+            distancia_conduccion = fmt_num(cap_stat_float(c.stat_prefix .. "_dist_driving_car")),
         }
     end
 
@@ -777,8 +820,18 @@ local function install_loop()
             Log.info("Boot", "Natives armadas")
             dump_api_surface()
         end
+        if warmup == 12 then
+            pcall(refresh_mode)   -- primera detección, sin esperar al primer intervalo
+        end
         if warmup == 15 and FeatureMgr.IsFeatureToggled(Utils.Joaat("PS_UpdateOnBoot")) then
             UPD.check()
+        end
+
+        -- Comprobación de modo cada ~180 frames (más o menos cada 3s a
+        -- 60fps): basta para detectar un cambio de sesión sin llamar a la
+        -- native de red en cada frame.
+        if armed and warmup % 180 == 0 then
+            pcall(refresh_mode)
         end
 
         pcall(UPD.tick)
