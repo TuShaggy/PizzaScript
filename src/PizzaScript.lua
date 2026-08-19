@@ -170,17 +170,26 @@ local function cap_ped_model_hash(ped_obj)
     return nil
 end
 
+-- Probado en juego: Stats.GetFloat/GetInt no devuelven un solo valor, sino
+-- dos (probablemente éxito + valor, como el patrón ya visto en los natives
+-- crudos con puntero de salida). Antes sólo se capturaba el primero, así
+-- que el panel mostraba "true" en vez del número. Se comprueban ambas
+-- posiciones y se usa la que sea un número, sin asumir el orden.
 local function cap_stat_float(name)
     if not (Stats and Stats.GetFloat) then return nil end
-    local ok, v = pcall(Stats.GetFloat, Utils.Joaat(name))
-    if ok then return v end
+    local pok, a, b = pcall(Stats.GetFloat, Utils.Joaat(name))
+    if not pok then return nil end
+    if type(a) == "number" then return a end
+    if type(b) == "number" then return b end
     return nil
 end
 
 local function cap_stat_int(name)
     if not (Stats and Stats.GetInt) then return nil end
-    local ok, v = pcall(Stats.GetInt, Utils.Joaat(name))
-    if ok then return v end
+    local pok, a, b = pcall(Stats.GetInt, Utils.Joaat(name))
+    if not pok then return nil end
+    if type(a) == "number" then return a end
+    if type(b) == "number" then return b end
     return nil
 end
 
@@ -194,6 +203,12 @@ local function cap_network_bool(hash)
 end
 
 --- Nombre del jugador local — vía Players.GetName(id), confirmado real.
+--- OJO: probado en juego, esto devuelve el nombre DE SESIÓN que Cherax
+--- reporta a otros jugadores (el propio Cherax.log lo confirma: "[Session]
+--- 'PizzaScript' is now Session Host"), que puede estar falseado por
+--- Cherax por privacidad — no necesariamente el apodo real de Social Club.
+--- No hay forma conocida de leer el apodo real si Cherax lo esconde a
+--- propósito.
 local function cap_players_get_name(player_id)
     if not player_id or not (Players and Players.GetName) then return nil end
     local ok, v = pcall(Players.GetName, player_id)
@@ -246,7 +261,9 @@ local function render_hud()
 
     if profile.online then
         local o = profile.online
-        lines[#lines + 1] = { text = "ONLINE: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
+        -- Puede no ser tu apodo real: Cherax puede falsear el nombre de
+        -- sesión que reportan estos natives, por privacidad.
+        lines[#lines + 1] = { text = "SESIÓN: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
         lines[#lines + 1] = { text = string.format("Conectado: %s | Social Club: %s | Host: %s",
                                      tostring(o.conectado), tostring(o.cuenta_social_club), tostring(o.es_host)), color = COLOR_CYAN, scale = 0.3 }
     end
