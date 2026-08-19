@@ -303,5 +303,102 @@ do
     mocks.restore()
 end
 
+--==============================================================================
+-- 10. PizzaProfile.lua: se autoactualiza (descarga, verifica con load(),
+--     respalda la version anterior). Prueba de caja negra igual que la del
+--     instalador de PizzaGames: no hay nada expuesto para llamar
+--     directamente (es un script suelto, no un modulo "return function"),
+--     asi que se ejecuta el archivo completo y se observan los efectos en
+--     el vfs simulado.
+--==============================================================================
+do
+    local mocks = Env.install_mocks()
+
+    -- PizzaProfile.lua necesita una superficie minima de Cherax que
+    -- sim.lua no mockea por defecto (FeatureMgr/ClickGUI/eFeatureType/
+    -- Natives/Script/ImGui): se añade solo para esta prueba.
+    local loops = {}
+    _G.Script = {
+        RegisterLooped = function(fn) loops[#loops + 1] = fn; return #loops end,
+        Yield = function(_) end,
+    }
+    _G.Natives = {
+        InvokeInt = function() return 0 end,
+        InvokeBool = function() return false end,
+        InvokeVoid = function() end,
+        InvokeString = function() return nil end,
+        InvokeFloat = function() return 0.0 end,
+        InvokeV3 = function() return nil end,
+    }
+    _G.eFeatureType = { Button = 1, Toggle = 2 }
+    local function fake_feature()
+        local f = {}
+        function f:SetDefaultValue(_) return f end
+        function f:SetSaveable(_) return f end
+        function f:Reset() return f end
+        function f:IsToggled() return false end
+        return f
+    end
+    local callbacks = {}
+    _G.FeatureMgr = {
+        AddFeature = function(hash, _name, _ftype, _desc, cb, _thread)
+            callbacks[hash] = cb
+            return fake_feature()
+        end,
+        -- Siempre activado a proposito: en esta prueba se quiere que el
+        -- toggle "Buscar actualizaciones al iniciar" dispare la comprobacion.
+        IsFeatureToggled = function(_hash) return true end,
+    }
+    _G.ClickGUI = {
+        AddTab = function(_name, _fn) end,
+        BeginCustomChildWindow = function(_) return false end,
+        EndCustomChildWindow = function() end,
+        RenderFeature = function(_) end,
+    }
+    _G.ImGui = { Text = function(_) end }
+
+    local new_content = "-- nueva version de PizzaProfile (prueba)\nreturn true\n"
+    mocks.curl_queue[#mocks.curl_queue + 1] = {
+        delay_ticks = 1, code = eCurlCode.CURLE_OK,
+        body = '{"version":"9.9.9","notas":"prueba"}',
+    }
+    mocks.curl_queue[#mocks.curl_queue + 1] = {
+        delay_ticks = 1, code = eCurlCode.CURLE_OK, body = new_content,
+    }
+
+    check("PizzaProfile.lua se autoactualiza: descarga, verifica y respalda", function()
+        local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaProfile.lua")
+        assert(chunk, err)
+
+        local self_path = "C:\\FakeCherax\\Lua\\PizzaProfile.lua"
+        mocks.vfs[self_path] = Env.read_file(Env.SRC_DIR .. "PizzaProfile.lua")
+
+        pcall(chunk)   -- registra el bucle (Script.RegisterLooped) y construye la UI
+
+        -- Suficientes ticks para pasar el warmup (arma en 10, comprueba
+        -- actualizacion en 15) y que la comprobacion de version.json termine.
+        for _ = 1, 20 do
+            for _, fn in ipairs(loops) do pcall(fn) end
+        end
+
+        local apply_cb = callbacks[Utils.Joaat("PP_ApplyUpdate")]
+        assert(apply_cb, "no se registro el boton 'Actualizar ahora'")
+        apply_cb()   -- simula pulsar el boton, ahora que hay version disponible
+
+        for _ = 1, 20 do
+            for _, fn in ipairs(loops) do pcall(fn) end
+        end
+
+        assert(mocks.vfs[self_path] == new_content,
+               "PizzaProfile.lua no se sustituyo con el contenido nuevo")
+        assert(mocks.vfs[self_path .. ".backup"] ~= nil,
+               "no se guardo copia de seguridad de la version anterior")
+    end)
+
+    _G.Script, _G.Natives, _G.eFeatureType = nil, nil, nil
+    _G.FeatureMgr, _G.ClickGUI, _G.ImGui = nil, nil, nil
+    mocks.restore()
+end
+
 print(string.format("\n===== %d/%d correctas =====", total - failed, total))
 if failed > 0 then os.exit(1) end

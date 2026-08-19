@@ -4,6 +4,13 @@ Contexto completo para retomar el proyecto en una sesión nueva (Claude Code).
 Escrito para que quien lo lea no repita los errores que ya costaron varios
 cierres del juego.
 
+**Este documento es sólo de PizzaGames.** El repositorio pasó a centrarse en
+un proyecto nuevo, `PizzaProfile` (`src/PizzaProfile.lua`, un solo archivo,
+menú de perfil de jugador) — PizzaGames queda en pausa, con su código
+intacto por si se retoma más adelante. Ver la cabecera de `PizzaProfile.lua`
+y el `README.md` de la raíz para lo nuevo. Las reglas de este documento
+(sección 5, sobre todo) siguen aplicando igual a los dos proyectos.
+
 ---
 
 ## 1. Qué es

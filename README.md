@@ -1,8 +1,56 @@
-# PizzaScript — PizzaGames
+# PizzaScript
 
-Framework de minijuegos en Lua para [Cherax](https://cherax.online), un mod
-menu de GTA V. Cuatro minijuegos de un solo jugador, cada uno construye su
-propio escenario con props:
+Herramientas en Lua para [Cherax](https://cherax.online), un mod menu de
+GTA V. Dos proyectos independientes en este repositorio:
+
+- **[PizzaProfile](#pizzaprofile)** — menú de perfil de jugador (activo).
+- **[PizzaGames](#pizzagames)** — framework de 4 minijuegos de un solo
+  jugador (en pausa, código intacto por si se retoma más adelante).
+
+---
+
+## PizzaProfile
+
+Un solo archivo (`src/PizzaProfile.lua`). Lee y guarda información real del
+jugador:
+
+- **Modo historia**: personaje que estás jugando ahora (Michael/Franklin/
+  Trevor), % de historia completada, desglose de misiones/minijuegos/tareas
+  secundarias, estadísticas por personaje.
+- **Cuenta online**: si has iniciado sesión, apodo de Social Club, si tienes
+  cuenta de Social Club, si eres host de la sesión.
+- Guarda todo en `PizzaProfile_Profiles\perfil_<tu_apodo_online>.txt`.
+
+**Qué NO muestra, a propósito**: no existe forma verificada de leer un flag
+de "personaje desbloqueado" ni una lista de misiones concretas completadas
+ni el dinero/rango de GTA Online — ver la cabecera de
+[`PizzaProfile.lua`](src/PizzaProfile.lua) para el detalle de qué está
+confirmado y qué no. Se prefiere decir "no disponible" antes que inventar un
+dato o un hash sin verificar.
+
+### Instalación
+
+Descarga sólo
+[`PizzaProfile.lua`](https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/src/PizzaProfile.lua)
+(clic derecho → Guardar como) y colócalo en `Documentos\Cherax\Lua\`. Ábrelo
+y ejecútalo desde la pestaña **Lua Editor** de Cherax. Busca la pestaña
+**PizzaProfile**:
+
+1. **Cargar perfil (modo historia)** — mientras estás en modo offline.
+2. **Cargar perfil (cuenta online)** — una vez unido a GTA Online.
+3. **Guardar perfil** — combina lo capturado y lo escribe a disco.
+
+El toggle **Mostrar panel en pantalla** dibuja un panel con la información
+capturada. El archivo se autoactualiza (comprueba versión, descarga,
+verifica con `load()` antes de sustituirse, guarda copia de seguridad) — ver
+la categoría "Actualizador" en la propia pestaña.
+
+---
+
+## PizzaGames
+
+Framework de minijuegos en Lua para Cherax. Cuatro minijuegos de un solo
+jugador, cada uno construye su propio escenario con props:
 
 | Categoría   | Minijuego            | Escenario                                     |
 |-------------|-----------------------|------------------------------------------------|
@@ -14,7 +62,7 @@ propio escenario con props:
 Un solo jugador, siempre. Ver [`docs/PROYECTO.md`](docs/PROYECTO.md) sección
 10 para el porqué.
 
-## Instalación
+### Instalación
 
 **Opción rápida — un solo archivo.** Descarga sólo
 [`PizzaGames.lua`](https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/src/PizzaGames.lua)
@@ -39,7 +87,7 @@ Si el Lua Editor no lista scripts dentro de subcarpetas, `PizzaGames.lua`
 puede ir suelto en `Lua\` con los módulos en `Lua\PizzaScript\`: el cargador
 prueba varias ubicaciones automáticamente.
 
-## Auto-actualización
+### Auto-actualización
 
 La pestaña PizzaGames incluye una categoría **Actualizaciones**:
 
@@ -58,7 +106,7 @@ caliente).
 
 Si no hay conexión, el script arranca igual con lo que ya tenga en disco.
 
-## Si algo falla
+### Si algo falla
 
 Todo error queda en el log de Cherax con el prefijo `[PizzaGames]`. La
 pestaña tiene un panel de salud (semáforo OK / AVISO / FALLO) y un botón
@@ -68,9 +116,10 @@ lo desbloquea sin tener que recargar GTA.
 
 ## Desarrollo
 
-`docs/PROYECTO.md` documenta la arquitectura completa, la API de Cherax
+`docs/PROYECTO.md` documenta la arquitectura de PizzaGames, la API de Cherax
 verificada y las trampas ya encontradas (crashes reales, no hipotéticos).
-Antes de tocar código, léelo.
+Antes de tocar código, léelo — las reglas (no inventar hashes, dos frenos en
+toda espera, degradar en vez de lanzar) valen para ambos proyectos.
 
 `sim/` es un simulador mínimo de la API de Cherax para probar fuera del
 juego con un Lua 5.4 normal:
@@ -79,10 +128,11 @@ juego con un Lua 5.4 normal:
 lua sim/run_tests.lua
 ```
 
-Comprueba que los 9 archivos compilan y ejercita el auto-actualizador
-completo (descarga, verificación, respaldo, reversión, los dos frenos de
-las esperas de red) sin tocar disco real ni red real. El workflow de
-`.github/workflows/validate.yml` corre lo mismo en cada push.
+Comprueba que todos los archivos de `src/` compilan y ejercita los dos
+auto-actualizadores completos (descarga, verificación con `load()`,
+respaldo, los dos frenos de las esperas de red) sin tocar disco real ni red
+real. El workflow de `.github/workflows/validate.yml` corre lo mismo en cada
+push.
 
 ## Créditos
 

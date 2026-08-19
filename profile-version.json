@@ -1,0 +1,4 @@
+{
+  "version": "1.0.0",
+  "notas": "Primera version de PizzaProfile: perfil offline (personaje actual, progreso de historia, stats por personaje) y online (apodo, estado de conexion), guardado en un archivo con el nombre online."
+}
