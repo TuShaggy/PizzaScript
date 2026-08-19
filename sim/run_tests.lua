@@ -60,7 +60,7 @@ do
 
     mocks.curl_queue[1] = {
         delay_ticks = 1, code = eCurlCode.CURLE_OK,
-        body = '{"version":"1.0.0","notas":""}',   -- debe coincidir con PS_VERSION en PizzaScript.lua
+        body = '{"version":"0.0.1-alpha","notas":""}',   -- debe coincidir con PS_VERSION en PizzaScript.lua
     }
 
     check("version remota igual a la local: no se toca el vfs", function()

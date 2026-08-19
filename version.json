@@ -1,4 +1,4 @@
 {
-  "version": "1.0.0",
-  "notas": "Primera version de PizzaScript: menu de perfil offline (personaje actual, progreso de historia, stats por personaje) y online (apodo, estado de conexion), guardado en un archivo con el nombre online."
+  "version": "0.0.1-alpha",
+  "notas": "Alpha. Primera version de PizzaScript: menu de perfil offline (personaje actual, progreso de historia, stats por personaje) y online (apodo, estado de conexion), guardado en un archivo con el nombre online. Corrige un bug que rompia la pestana (RenderFeature con el objeto Feature en vez del hash)."
 }

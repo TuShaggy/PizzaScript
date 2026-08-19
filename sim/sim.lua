@@ -150,6 +150,7 @@ function Env.install_cherax_ui_mocks()
     _G.eFeatureType = { Button = 1, Toggle = 2 }
     _G.FeatureMgr = {
         AddFeature = function(hash, _name, _ftype, _desc, cb, _thread)
+            assert(type(hash) == "number", "FeatureMgr.AddFeature: el hash debe ser un número, se recibió " .. type(hash))
             callbacks[hash] = cb
             local f = {}
             function f:SetDefaultValue(_) return f end
@@ -160,13 +161,23 @@ function Env.install_cherax_ui_mocks()
         end,
         -- Siempre activado a propósito: las pruebas quieren que el toggle
         -- "buscar al iniciar" dispare la comprobación de versión.
-        IsFeatureToggled = function(_hash) return true end,
+        IsFeatureToggled = function(hash)
+            assert(type(hash) == "number", "FeatureMgr.IsFeatureToggled: el hash debe ser un número, se recibió " .. type(hash))
+            return true
+        end,
     }
     _G.ClickGUI = {
         AddTab = function(_name, _fn) end,
         BeginCustomChildWindow = function(_) return false end,
         EndCustomChildWindow = function() end,
-        RenderFeature = function(_) end,
+        -- El error real que motivó esto: pasar el objeto Feature (lo que
+        -- devuelve AddFeature) en vez de su hash revienta en Cherax de
+        -- verdad ("sol: no matching function call...") y mata la corrutina
+        -- de la pestaña. El mock lo valida para que un fallo así se vea en
+        -- las pruebas, no sólo jugando.
+        RenderFeature = function(hash)
+            assert(type(hash) == "number", "ClickGUI.RenderFeature: se esperaba el hash (número), se recibió " .. type(hash) .. " — ¿se pasó el objeto Feature por error?")
+        end,
     }
     _G.ImGui = { Text = function(_) end }
 

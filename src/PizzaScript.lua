@@ -1,6 +1,6 @@
 --[[
 ================================================================================
-  PizzaScript  v1.0.0
+  PizzaScript  v0.0.1-alpha
   Herramienta para Cherax (GTA V) en un solo archivo. Por ahora: un menú de
   perfil de jugador (offline + online). La idea es ir añadiendo apartados
   nuevos aquí mismo con el tiempo, no crear archivos sueltos por función —
@@ -58,7 +58,7 @@
 -- Configuración
 --==============================================================================
 
-local PS_VERSION  = "1.0.0"
+local PS_VERSION  = "0.0.1-alpha"
 local REPO_RAW     = "https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/"
 local VERSION_URL  = REPO_RAW .. "version.json"
 local FILE_URL     = REPO_RAW .. "src/PizzaScript.lua"
@@ -607,15 +607,21 @@ local function build_ui()
         "Guarda lo capturado hasta ahora en un archivo con tu nombre online",
         function() save_profile() end, true)
 
-    local h_panel = FeatureMgr.AddFeature(Utils.Joaat("PS_ShowPanel"), "Mostrar panel en pantalla",
+    -- OJO: RenderFeature quiere el HASH (número), no el objeto Feature que
+    -- devuelve AddFeature. Guardarlos en la misma variable fue el bug que
+    -- mataba la corrutina de la pestaña en el primer frame ("cannot resume
+    -- dead coroutine" en bucle, que es lo que se veía como parpadeo).
+    local h_panel = Utils.Joaat("PS_ShowPanel")
+    local f_panel = FeatureMgr.AddFeature(h_panel, "Mostrar panel en pantalla",
         eFeatureType.Toggle, "Panel con la información capturada",
         function(f) show_panel = f:IsToggled() end, false)
-    if h_panel then h_panel:SetDefaultValue(true); h_panel:SetSaveable(true); h_panel:Reset() end
+    if f_panel then f_panel:SetDefaultValue(true); f_panel:SetSaveable(true); f_panel:Reset() end
     show_panel = true
 
-    local h_boot = FeatureMgr.AddFeature(Utils.Joaat("PS_UpdateOnBoot"), "Buscar actualizaciones al iniciar",
+    local h_boot = Utils.Joaat("PS_UpdateOnBoot")
+    local f_boot = FeatureMgr.AddFeature(h_boot, "Buscar actualizaciones al iniciar",
         eFeatureType.Toggle, "Comprueba automáticamente al cargar el script", function() end, false)
-    if h_boot then h_boot:SetDefaultValue(true); h_boot:SetSaveable(true); h_boot:Reset() end
+    if f_boot then f_boot:SetDefaultValue(true); f_boot:SetSaveable(true); f_boot:Reset() end
 
     local h_checkupd = Utils.Joaat("PS_CheckUpdate")
     FeatureMgr.AddFeature(h_checkupd, "Buscar actualizaciones", eFeatureType.Button, "",
