@@ -38,7 +38,9 @@ seis ubicaciones y registra cada intento.
 ## 3. Arquitectura
 
 ```
-PizzaGames.lua            Punto de entrada. Rutas absolutas, carga de módulos.
+PizzaGames.lua            Punto de entrada. Rutas absolutas, carga de módulos,
+                           y si no encuentra nada instalado, se los descarga él
+                           solo desde el repositorio antes de arrancar.
 PizzaGames_Core.lua       Núcleo: log, registro, máquina de estados, adaptador.
 PizzaGames_Natives.lua    56 natives por hash + barrera de hilo + punteros.
 PizzaGames_Cherax.lua     ÚNICO archivo que conoce la API de Cherax.
@@ -309,6 +311,27 @@ Consideraciones aplicadas:
 - Los `raw.githubusercontent.com` se cachean unos minutos; no esperar
   inmediatez tras un push.
 
+### Instalador de un solo archivo
+
+`PizzaGames.lua` puede repartirse **solo**, sin los otros 8 archivos: si al
+arrancar no encuentra ningún módulo en la carpeta de instalación, los
+descarga él mismo desde `src/PizzaScript/` de este repositorio antes de
+seguir. Cada archivo se verifica con `load()` antes de guardarse, igual que
+el auto-actualizador — no puede quedar una instalación a medias con módulos
+mezclados de distintas versiones.
+
+No reutiliza `PizzaGames_Updater.lua` para esto: ese módulo es justo uno de
+los que hay que descargar, así que no puede existir todavía la primera vez.
+Es una duplicación deliberada de una pequeña parte de la lógica (descarga
+secuencial + `load()` + dos frenos), no un descuido — los dos mecanismos
+corren en momentos distintos y con garantías distintas (el instalador no
+tiene nada que revertir; el actualizador sí).
+
+Una vez que los módulos ya existen en disco, `PizzaGames.lua` no vuelve a
+descargar nada por su cuenta en arranques posteriores: eso es trabajo del
+auto-actualizador (con su propia UI y comparación de versiones), no del
+instalador.
+
 ### Estructura de repositorio
 
 ```
@@ -361,7 +384,9 @@ pruebas) valida sintaxis. El workflow de CI corre lo mismo en cada push.
 **Funciona:** carga, pestaña con 4 categorías de minijuegos + Actualizaciones,
 panel de salud, HUD, natives verificadas, borrado sin fugas, teletransporte a
 la salida, intros cinematográficas (desactivadas por defecto), autotest,
-**auto-actualizador con verificación por `load()`, respaldo y reversión**.
+**auto-actualizador con verificación por `load()`, respaldo y reversión**,
+**instalador de un solo archivo** (`PizzaGames.lua` descarga el resto solo si
+no los encuentra).
 
 **Sin verificar en juego:** nombres de props de calzada; si el parpadeo
 desapareció del todo; si la calzada queda a la altura correcta (`z_offset` está

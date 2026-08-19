@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "files": [
     "PizzaGames.lua",
     "PizzaScript/PizzaGames_Core.lua",
@@ -11,5 +11,5 @@
     "PizzaScript/PizzaGames_Games.lua",
     "PizzaScript/PizzaGames_Updater.lua"
   ],
-  "notas": "Primera version con auto-actualizador. Reorganizacion en repositorio, sin cambios de jugabilidad."
+  "notas": "PizzaGames.lua ahora es un instalador de un solo archivo: si no encuentra los demas modulos en disco, los descarga solo desde este repositorio antes de arrancar."
 }

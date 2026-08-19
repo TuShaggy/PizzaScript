@@ -23,7 +23,7 @@ local PG = {}
 -- no existía un número de versión único: cada archivo llevaba el suyo en la
 -- cabecera, sin relación entre ellos. Éste es el primero que de verdad se usa
 -- para algo (el auto-actualizador) y se sube en cada release junto al repo.
-PG._VERSION = "1.0.0"
+PG._VERSION = "1.1.0"
 PG._NAME    = "PizzaGames"
 
 --==============================================================================

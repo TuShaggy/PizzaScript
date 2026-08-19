@@ -247,5 +247,61 @@ do
     mocks.restore()
 end
 
+--==============================================================================
+-- 9. Instalador de un solo archivo: PizzaGames.lua descarga todo si no
+--    encuentra nada instalado (sin necesitar PizzaGames_Updater.lua, que es
+--    justo uno de los archivos que hay que descargar)
+--==============================================================================
+do
+    local mocks = Env.install_mocks()   -- vfs vacío: nada "instalado" todavía
+
+    -- Script.RegisterLooped: PizzaGames.lua es el propio script de arranque,
+    -- no un módulo "return function(PG)", así que no pasa por
+    -- Env.load_updater/load_core y necesita este mock aparte.
+    local loops = {}
+    _G.Script = {
+        RegisterLooped = function(fn) loops[#loops + 1] = fn; return #loops end,
+        Yield = function(_) end,
+    }
+
+    local order = {
+        "PizzaGames_Core.lua", "PizzaGames_Natives.lua", "PizzaGames_Cinema.lua",
+        "PizzaGames_Prefabs.lua", "PizzaGames_Scene.lua", "PizzaGames_Games.lua",
+        "PizzaGames_Updater.lua", "PizzaGames_Cherax.lua",
+    }
+    for _, name in ipairs(order) do
+        mocks.curl_queue[#mocks.curl_queue + 1] = {
+            delay_ticks = 1, code = eCurlCode.CURLE_OK,
+            body = Env.read_file(Env.SRC_DIR .. "PizzaScript\\" .. name),
+        }
+    end
+
+    check("PizzaGames.lua descarga los 8 modulos cuando no hay nada instalado", function()
+        local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaGames.lua")
+        assert(chunk, err)
+
+        -- pcall: más allá de la descarga, finish_boot() intenta instalar en
+        -- Cherax (FeatureMgr/ClickGUI/GTA no están simulados aquí, fuera del
+        -- alcance de este simulador). El propio adaptador de Core.lua está
+        -- pensado para degradarse sin lanzar, pero el pcall es la red de
+        -- seguridad: lo único que esta prueba necesita verificar es la
+        -- descarga, no el arranque completo dentro de Cherax.
+        pcall(chunk)
+
+        for _ = 1, 50 do
+            for _, fn in ipairs(loops) do pcall(fn) end
+        end
+
+        for _, name in ipairs(order) do
+            local expected = Env.read_file(Env.SRC_DIR .. "PizzaScript\\" .. name)
+            local got = mocks.vfs["C:\\FakeCherax\\Lua\\PizzaScript\\" .. name]
+            assert(got == expected, "no se descargó/escribió correctamente: " .. name)
+        end
+    end)
+
+    _G.Script = nil
+    mocks.restore()
+end
+
 print(string.format("\n===== %d/%d correctas =====", total - failed, total))
 if failed > 0 then os.exit(1) end

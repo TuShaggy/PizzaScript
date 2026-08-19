@@ -16,14 +16,24 @@ Un solo jugador, siempre. Ver [`docs/PROYECTO.md`](docs/PROYECTO.md) sección
 
 ## Instalación
 
-1. Copia todo el contenido de [`src/`](src) a
-   `Documentos\Cherax\Lua\`, conservando la estructura:
-   - `src/PizzaGames.lua` → `Documentos\Cherax\Lua\PizzaGames.lua`
-   - `src/PizzaScript/*.lua` → `Documentos\Cherax\Lua\PizzaScript\*.lua`
-2. En Cherax, pestaña **Lua Editor** (dentro de *Lua Content*), abre y
-   ejecuta **sólo** `PizzaGames.lua`. Él carga el resto de módulos por su
-   cuenta y registra cada intento en el log de Cherax.
-3. Busca la pestaña **PizzaGames** en Lua Content.
+**Opción rápida — un solo archivo.** Descarga sólo
+[`PizzaGames.lua`](https://raw.githubusercontent.com/TuShaggy/PizzaScript/main/src/PizzaGames.lua)
+(clic derecho → Guardar como) y colócalo en `Documentos\Cherax\Lua\`. Ábrelo
+y ejecútalo desde la pestaña **Lua Editor** de Cherax (dentro de *Lua
+Content*): si no encuentra los demás módulos en disco, los descarga él solo
+desde este repositorio antes de arrancar, verificando que cada uno compila
+antes de guardarlo. Sólo tarda unos segundos y sólo pasa la primera vez —
+después arranca directamente con lo que ya tiene en disco.
+
+**Opción manual — todo el árbol.** Copia todo el contenido de
+[`src/`](src) a `Documentos\Cherax\Lua\`, conservando la estructura:
+- `src/PizzaGames.lua` → `Documentos\Cherax\Lua\PizzaGames.lua`
+- `src/PizzaScript/*.lua` → `Documentos\Cherax\Lua\PizzaScript\*.lua`
+
+En cualquiera de los dos casos, después:
+1. Ejecuta **sólo** `PizzaGames.lua` desde el Lua Editor. Él carga el resto
+   de módulos por su cuenta y registra cada intento en el log de Cherax.
+2. Busca la pestaña **PizzaGames** en Lua Content.
 
 Si el Lua Editor no lista scripts dentro de subcarpetas, `PizzaGames.lua`
 puede ir suelto en `Lua\` con los módulos en `Lua\PizzaScript\`: el cargador
