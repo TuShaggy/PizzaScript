@@ -272,7 +272,7 @@ do
     for _, name in ipairs(order) do
         mocks.curl_queue[#mocks.curl_queue + 1] = {
             delay_ticks = 1, code = eCurlCode.CURLE_OK,
-            body = Env.read_file(Env.SRC_DIR .. "PizzaScript\\" .. name),
+            body = Env.read_file(Env.SRC_DIR .. "PizzaScript/" .. name),
         }
     end
 
@@ -293,7 +293,7 @@ do
         end
 
         for _, name in ipairs(order) do
-            local expected = Env.read_file(Env.SRC_DIR .. "PizzaScript\\" .. name)
+            local expected = Env.read_file(Env.SRC_DIR .. "PizzaScript/" .. name)
             local got = mocks.vfs["C:\\FakeCherax\\Lua\\PizzaScript\\" .. name]
             assert(got == expected, "no se descargó/escribió correctamente: " .. name)
         end

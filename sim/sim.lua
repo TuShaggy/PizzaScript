@@ -21,8 +21,14 @@ local Env = {}
 -- actual: así `lua sim/sim.lua` y `cd sim && lua run_tests.lua` funcionan igual.
 local SIM_DIR   = (debug.getinfo(1, "S").source:match("@?(.*[/\\])")) or "./"
 Env.SIM_DIR     = SIM_DIR
-Env.REPO_ROOT   = SIM_DIR .. "..\\"
-Env.SRC_DIR     = Env.REPO_ROOT .. "src\\"
+-- Barra normal, no contrabarra: esto son rutas de disco reales que
+-- lee/compila el propio simulador (io.open/load), y tienen que funcionar
+-- igual en Windows (donde se desarrolla) que en el runner de CI (Linux,
+-- donde '\' no separa carpetas). Las rutas *dentro* de la simulación (vfs,
+-- GetMenuRootPath) sí usan '\', porque representan una instalación real de
+-- Cherax en Windows y el propio código bajo prueba las construye así.
+Env.REPO_ROOT   = SIM_DIR .. "../"
+Env.SRC_DIR     = Env.REPO_ROOT .. "src/"
 
 local function read_file(path)
     local f, err = io.open(path, "rb")
@@ -132,14 +138,14 @@ end
 --- solas a os.time() si no hay 'game_timer' resuelto, así que funciona
 --- igual aquí que dentro de Cherax cuando faltan capacidades.
 function Env.load_core()
-    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript\\PizzaGames_Core.lua")
+    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript/PizzaGames_Core.lua")
     if not chunk then error("PizzaGames_Core.lua no compila: " .. tostring(err)) end
     return chunk()
 end
 
 --- Carga PizzaGames_Updater.lua real y lo instancia contra un PG dado.
 function Env.load_updater(PG, opts)
-    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript\\PizzaGames_Updater.lua")
+    local chunk, err = Env.compile(Env.SRC_DIR .. "PizzaScript/PizzaGames_Updater.lua")
     if not chunk then error("PizzaGames_Updater.lua no compila: " .. tostring(err)) end
     local factory = chunk()
     return factory(PG, opts)
@@ -152,7 +158,7 @@ function Env.all_src_files(U)
     local version, files = U.parse_version_json(body)
     local out = {}
     for _, rel in ipairs(files) do
-        out[#out + 1] = { rel = rel, path = Env.SRC_DIR .. rel:gsub("/", "\\") }
+        out[#out + 1] = { rel = rel, path = Env.SRC_DIR .. rel }
     end
     return version, out
 end
