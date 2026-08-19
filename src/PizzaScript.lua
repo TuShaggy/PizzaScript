@@ -669,6 +669,26 @@ end
 -- Arranque
 --==============================================================================
 
+--- Vuelca al log qué namespaces/funciones existen de verdad en este Cherax.
+--- Los natives de lectura de perfil (STATS.*, PED.*) sólo existen si el
+--- archivo oficial de natives (natives-*.lua, ver cabecera) está cargado
+--- aparte; sin él, todo sale "no disponible" en vez de arriesgar un hash
+--- adivinado. Esto dice exactamente qué falta, en vez de suponerlo.
+local function dump_api_surface()
+    local function list_keys(t)
+        if type(t) ~= "table" then return "(" .. type(t) .. ")" end
+        local keys = {}
+        for k in pairs(t) do keys[#keys + 1] = tostring(k) end
+        table.sort(keys)
+        return #keys > 0 and table.concat(keys, ", ") or "(vacío)"
+    end
+    Log.info("Diag", "STATS presente: %s -> %s", tostring(_G.STATS ~= nil), list_keys(_G.STATS))
+    Log.info("Diag", "NETWORK presente: %s -> %s", tostring(_G.NETWORK ~= nil), list_keys(_G.NETWORK))
+    Log.info("Diag", "PLAYER presente: %s -> %s", tostring(_G.PLAYER ~= nil), list_keys(_G.PLAYER))
+    Log.info("Diag", "PED presente: %s -> %s", tostring(_G.PED ~= nil), list_keys(_G.PED))
+    Log.info("Diag", "SC_GET_NICKNAME presente: %s", tostring(_G.SC_GET_NICKNAME ~= nil))
+end
+
 local function env_check()
     local required = { "FeatureMgr", "ClickGUI", "Utils", "eFeatureType", "Script", "Natives" }
     local missing = {}
@@ -691,6 +711,7 @@ local function install_loop()
             -- plenamente asentado antes de tocar cualquier native.
             armed = true
             Log.info("Boot", "Natives armadas")
+            dump_api_surface()
         end
         if warmup == 15 and FeatureMgr.IsFeatureToggled(Utils.Joaat("PS_UpdateOnBoot")) then
             UPD.check()
