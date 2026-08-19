@@ -669,24 +669,46 @@ end
 -- Arranque
 --==============================================================================
 
---- Vuelca al log qué namespaces/funciones existen de verdad en este Cherax.
+--- Vuelca al log TODO lo que exista en _G que parezca de Cherax/GTA (nunca
+--- invoca nada, sólo enumera nombres con pairs() — cero riesgo de crash).
 --- Los natives de lectura de perfil (STATS.*, PED.*) sólo existen si el
---- archivo oficial de natives (natives-*.lua, ver cabecera) está cargado
---- aparte; sin él, todo sale "no disponible" en vez de arriesgar un hash
---- adivinado. Esto dice exactamente qué falta, en vez de suponerlo.
+--- archivo oficial de natives está cargado aparte; en vez de seguir
+--- adivinando qué hay, esto lo dice todo de una vez.
+local STDLIB_NAMES = {
+    _G = true, string = true, table = true, math = true, os = true, io = true,
+    coroutine = true, debug = true, utf8 = true, package = true,
+}
+
 local function dump_api_surface()
-    local function list_keys(t)
-        if type(t) ~= "table" then return "(" .. type(t) .. ")" end
-        local keys = {}
-        for k in pairs(t) do keys[#keys + 1] = tostring(k) end
-        table.sort(keys)
-        return #keys > 0 and table.concat(keys, ", ") or "(vacío)"
+    Log.info("Diag", "===== Volcado de la API disponible en este Cherax =====")
+
+    local names = {}
+    for k, v in pairs(_G) do
+        if type(v) == "table" and not STDLIB_NAMES[k] then names[#names + 1] = k end
     end
-    Log.info("Diag", "STATS presente: %s -> %s", tostring(_G.STATS ~= nil), list_keys(_G.STATS))
-    Log.info("Diag", "NETWORK presente: %s -> %s", tostring(_G.NETWORK ~= nil), list_keys(_G.NETWORK))
-    Log.info("Diag", "PLAYER presente: %s -> %s", tostring(_G.PLAYER ~= nil), list_keys(_G.PLAYER))
-    Log.info("Diag", "PED presente: %s -> %s", tostring(_G.PED ~= nil), list_keys(_G.PED))
-    Log.info("Diag", "SC_GET_NICKNAME presente: %s", tostring(_G.SC_GET_NICKNAME ~= nil))
+    table.sort(names)
+    Log.info("Diag", "Namespaces (tablas) en _G, %d: %s", #names, table.concat(names, ", "))
+
+    for _, name in ipairs(names) do
+        local ok, fn_names = pcall(function()
+            local list = {}
+            for k, v in pairs(_G[name]) do
+                if type(v) == "function" then list[#list + 1] = tostring(k) end
+            end
+            table.sort(list)
+            return list
+        end)
+        if ok and #fn_names > 0 then
+            Log.info("Diag", "%s (%d funciones): %s", name, #fn_names, table.concat(fn_names, ", "))
+        elseif ok then
+            Log.info("Diag", "%s: sin funciones directas (puede tener sub-tablas)", name)
+        else
+            Log.info("Diag", "%s: no se pudo enumerar (%s)", name, tostring(fn_names))
+        end
+    end
+
+    Log.info("Diag", "SC_GET_NICKNAME (global suelta) presente: %s", tostring(_G.SC_GET_NICKNAME ~= nil))
+    Log.info("Diag", "===== Fin del volcado =====")
 end
 
 local function env_check()
