@@ -304,6 +304,8 @@ local function render_hud()
             -- Puede no ser tu apodo real: Cherax puede falsear el nombre
             -- de sesión que reportan estos natives, por privacidad.
             lines[#lines + 1] = { text = "SESIÓN: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
+            lines[#lines + 1] = { text = string.format("Rango: %s   Local nocturno: %s%%",
+                                         tostring(o.rango), tostring(o.popularidad_local)), color = COLOR_CYAN }
             lines[#lines + 1] = { text = string.format("Conectado: %s | Social Club: %s | Host: %s",
                                          tostring(o.conectado), tostring(o.cuenta_social_club), tostring(o.es_host)), color = COLOR_CYAN, scale = 0.3 }
         else
@@ -419,8 +421,27 @@ local function read_online()
     data.nombre = cap_players_get_name(player_id)
     data.apodo  = cap_sc_nickname()   -- confirmado ausente; se deja por si Cherax lo añade
 
-    Log.info("Perfil", "Perfil online capturado (nombre: %s, conectado: %s, en línea: %s)",
-             tostring(data.nombre), tostring(data.conectado), tostring(data.en_linea))
+    -- Verificados contra una base de datos real de stats de GTA Online
+    -- (vespura.com/fivem/gta-stats, cruzada con una segunda lista
+    -- independiente) y, para la popularidad, un script real de otro mod
+    -- menu (bizteroids.lua de dinguscool4) que usa exactamente este
+    -- mecanismo (Stats.GetInt + Utils.Joaat), así que se leen igual que
+    -- los stats de historia. No confundir con "heat" de negocios ni con el
+    -- stock de almacenes: esos usan mecanismos que este Cherax no expone
+    -- (int "empaquetado" por ID, o memoria de variables globales del
+    -- script del juego con offsets que dependen de la versión exacta de
+    -- GTA) — no se implementan para no arriesgar un dato incorrecto.
+    data.rango       = cap_stat_int("CHAR_RANK_FM")
+    data.experiencia = cap_stat_int("CHAR_XP_FM")
+    -- MPX_CLUB_POPULARITY es un entero en escala 0-1000 (según la fuente,
+    -- coincide con el medidor de 0-100% que se ve en el juego) — se
+    -- convierte a porcentaje aquí; si el juego no lo confirma así, el
+    -- número seguirá siendo el dato crudo, sólo mal escalado.
+    local popularidad_bruta = cap_stat_int("MPX_CLUB_POPULARITY")
+    data.popularidad_local = popularidad_bruta and fmt_num(popularidad_bruta / 10) or nil
+
+    Log.info("Perfil", "Perfil online capturado (nombre: %s, conectado: %s, en línea: %s, rango: %s)",
+             tostring(data.nombre), tostring(data.conectado), tostring(data.en_linea), tostring(data.rango))
     return data
 end
 
@@ -444,6 +465,9 @@ local function build_save_lines()
         add("online.capturado", o.captured_at)
         add("online.apodo", o.apodo)
         add("online.nombre", o.nombre)
+        add("online.rango", o.rango)
+        add("online.experiencia", o.experiencia)
+        add("online.popularidad_local_nocturno", o.popularidad_local)
         add("online.conectado", o.conectado)
         add("online.en_linea", o.en_linea)
         add("online.cuenta_social_club", o.cuenta_social_club)
