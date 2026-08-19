@@ -348,13 +348,29 @@ local function read_online()
     data.cuenta_social_club  = cap_network_bool("NETWORK_HAS_SOCIAL_CLUB_ACCOUNT", 0x67A5589628E0CFF6)
     data.es_host             = cap_network_bool("NETWORK_IS_HOST", 0x8DB296B814EDDA07)
 
-    local player = cap_player_id()
-    data.nombre_red    = cap_network_player_name(player)
-    data.nombre_jugador = cap_player_name(player)
-    data.apodo          = cap_sc_nickname()
+    -- El apodo y los nombres de red SÓLO se intentan si NETWORK_IS_SIGNED_ONLINE
+    -- confirma una sesión de GTA Online activa. La primera prueba en juego
+    -- provocó un EXCEPTION_ACCESS_VIOLATION real dentro de socialclub.dll
+    -- (pila de la excepción pasando por socialclub.dll, sin ningún log entre
+    -- pulsar el botón y el crash) — pinta a que se llamó a estos natives sin
+    -- una sesión online real detrás, y eso no lo detiene un pcall: es un
+    -- crash nativo, no un error de Lua. No hay confirmación todavía de que
+    -- sea seguro en todos los casos ni siquiera estando en línea, así que
+    -- esto sigue siendo zona de riesgo — pruébese con cuidado.
+    if data.en_linea then
+        local player = cap_player_id()
+        data.nombre_red     = cap_network_player_name(player)
+        data.nombre_jugador = cap_player_name(player)
+        data.apodo          = cap_sc_nickname()
+    else
+        Log.warn("Perfil", "No hay sesión de GTA Online activa: se omite apodo/nombre de red (evita el crash ya visto)")
+        if GUI and GUI.AddToast then
+            GUI.AddToast("PizzaScript", "No estás en GTA Online: apodo y nombre de red no disponibles", 4000)
+        end
+    end
 
-    Log.info("Perfil", "Perfil online capturado (apodo: %s, conectado: %s)",
-             tostring(data.apodo), tostring(data.conectado))
+    Log.info("Perfil", "Perfil online capturado (apodo: %s, conectado: %s, en línea: %s)",
+             tostring(data.apodo), tostring(data.conectado), tostring(data.en_linea))
     return data
 end
 
