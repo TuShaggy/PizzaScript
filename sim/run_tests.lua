@@ -174,9 +174,15 @@ do
         pump(loops, 1820)   -- 10 de warmup + 1800 del freno + margen
 
         -- No hay estado expuesto para comprobarlo directamente (script
-        -- suelto): la prueba real es que 1820 ticks no cuelgan el proceso
-        -- y que no se generó ningún archivo espurio en el vfs.
-        assert(next(mocks.vfs) == nil, "no debería haberse escrito nada en disco")
+        -- suelto): la prueba real es que 1820 ticks no cuelgan el proceso.
+        -- El único archivo que debería existir es el informe de
+        -- diagnóstico (se escribe siempre al arrancar, warmup 10); nada
+        -- relacionado con la comprobación de versión que nunca termina.
+        assert(mocks.vfs["C:\\FakeCherax\\Lua\\PizzaScript_Diag.txt"] ~= nil,
+               "debería haberse escrito el informe de diagnóstico")
+        local count = 0
+        for _ in pairs(mocks.vfs) do count = count + 1 end
+        assert(count == 1, "no debería haberse escrito nada más en disco (" .. count .. " archivos)")
     end)
 
     mocks.restore()

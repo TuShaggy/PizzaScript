@@ -679,16 +679,29 @@ local STDLIB_NAMES = {
     coroutine = true, debug = true, utf8 = true, package = true,
 }
 
-local function dump_api_surface()
-    Log.info("Diag", "===== Volcado de la API disponible en este Cherax =====")
+local function api_surface_report()
+    local L = {}
+    local function add(fmt, ...)
+        L[#L + 1] = select("#", ...) > 0 and string.format(fmt, ...) or fmt
+    end
+
+    add("PizzaScript — Diagnóstico de API de Cherax")
+    add("Generado: %s", os.date("%Y-%m-%d %H:%M:%S"))
+    add("Versión de PizzaScript: %s", PS_VERSION)
+    add("")
+    add("Sólo enumera nombres con pairs() — nunca invoca nada, cero riesgo de crash.")
+    add("")
 
     local names = {}
     for k, v in pairs(_G) do
         if type(v) == "table" and not STDLIB_NAMES[k] then names[#names + 1] = k end
     end
     table.sort(names)
-    Log.info("Diag", "Namespaces (tablas) en _G, %d: %s", #names, table.concat(names, ", "))
+    add("== Namespaces (tablas) en _G: %d ==", #names)
+    add(table.concat(names, ", "))
+    add("")
 
+    add("== Detalle por namespace ==")
     for _, name in ipairs(names) do
         local ok, fn_names = pcall(function()
             local list = {}
@@ -698,17 +711,40 @@ local function dump_api_surface()
             table.sort(list)
             return list
         end)
+        add("")
+        add("[%s]", name)
         if ok and #fn_names > 0 then
-            Log.info("Diag", "%s (%d funciones): %s", name, #fn_names, table.concat(fn_names, ", "))
+            add("%d funciones: %s", #fn_names, table.concat(fn_names, ", "))
         elseif ok then
-            Log.info("Diag", "%s: sin funciones directas (puede tener sub-tablas)", name)
+            add("sin funciones directas (puede tener sub-tablas)")
         else
-            Log.info("Diag", "%s: no se pudo enumerar (%s)", name, tostring(fn_names))
+            add("no se pudo enumerar (%s)", tostring(fn_names))
         end
     end
 
-    Log.info("Diag", "SC_GET_NICKNAME (global suelta) presente: %s", tostring(_G.SC_GET_NICKNAME ~= nil))
-    Log.info("Diag", "===== Fin del volcado =====")
+    add("")
+    add("== Globales sueltas ==")
+    add("SC_GET_NICKNAME presente: %s", tostring(_G.SC_GET_NICKNAME ~= nil))
+
+    return table.concat(L, "\n") .. "\n"
+end
+
+--- Escribe el informe a un archivo (más cómodo de leer/compartir que
+--- rebuscar en Cherax.log) y deja sólo un aviso corto en el log.
+local function dump_api_surface()
+    local report = api_surface_report()
+    local path = home_dir and join(home_dir, "PizzaScript_Diag.txt") or "PizzaScript_Diag.txt"
+
+    if FileMgr and FileMgr.WriteFileContent then
+        FileMgr.WriteFileContent(path, report)
+        Log.info("Diag", "Informe de la API escrito en: %s", path)
+        if GUI and GUI.AddToast then
+            GUI.AddToast("PizzaScript", "Diagnóstico de API guardado en " .. path, 5000)
+        end
+    else
+        Log.warn("Diag", "FileMgr no disponible: no se pudo escribir el informe, se vuelca al log")
+        for line in report:gmatch("[^\n]+") do Log.info("Diag", "%s", line) end
+    end
 end
 
 local function env_check()
