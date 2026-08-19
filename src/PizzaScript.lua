@@ -9,20 +9,25 @@
 
   QUÉ ESTÁ VERIFICADO Y QUÉ NO (no se inventa nada de esto)
   --------------------------------------------------------------------------
-  Verificado contra fuentes reales (LCPDFR NativeDB, el natives-one.lua real
-  de SATTY91/Cherax-Lua-API-Documentation, y un script decompilado real de
-  Rockstar que calcula el % de la pantalla de pausa):
-    - % de historia completada: stat "total_progress_made" vía STAT_GET_FLOAT.
+  A partir de la versión 0.0.1-alpha esto ya no son suposiciones sobre la
+  documentación de Cherax: PizzaScript_Diag.txt (que este mismo archivo
+  genera al arrancar, enumerando _G sin invocar nada) dio la API REAL de
+  este Cherax, y bastante distinta de lo documentado en otros sitios:
+    - NO existen namespaces "STATS", "PED", "PLAYER" ni "NETWORK".
+    - Sí existen (con otros nombres): `Stats.GetFloat/GetInt/GetBool(hash)`,
+      `GTA.GetLocalPed()/GetLocalPlayerId()/PointerToHandle()`,
+      `Players.GetName(id)/GetCPed(id)/...`.
+    - `SC_GET_NICKNAME` no existe como global suelta en este Cherax.
+  Verificado que existen y se usan así:
+    - % de historia completada: stat "total_progress_made" vía
+      `Stats.GetFloat(Utils.Joaat("total_progress_made"))`.
     - Desglose agregado: num_missions_*, num_minigames_*, num_oddjobs_*,
       num_rndpeople_*, num_rndevents_*, num_misc_*, percent_story_missions,
-      percent_ambient_missions, percent_oddjobs.
-    - Personaje actual: comparar el modelo del ped contra player_zero/
-      player_one/player_two (Michael/Franklin/Trevor).
-    - Stats por personaje: prefijos sp0_/sp1_/sp2_ (se usan shots, deaths,
-      dist_driving_car, que son los que se pudieron confirmar).
-    - Cuenta online: NETWORK_IS_SIGNED_IN, NETWORK_IS_SIGNED_ONLINE,
-      NETWORK_HAS_SOCIAL_CLUB_ACCOUNT, NETWORK_IS_HOST,
-      NETWORK_PLAYER_GET_NAME, GET_PLAYER_NAME, SC_GET_NICKNAME.
+      percent_ambient_missions, percent_oddjobs — mismo mecanismo.
+    - Nombre del jugador: `Players.GetName(GTA.GetLocalPlayerId())`.
+    - Cuenta online (sin wrapper, sólo hash crudo confirmado y sin
+      argumentos): NETWORK_IS_SIGNED_IN, NETWORK_IS_SIGNED_ONLINE,
+      NETWORK_HAS_SOCIAL_CLUB_ACCOUNT, NETWORK_IS_HOST.
 
   NO existe / no se pudo verificar — por eso NO está implementado:
     - Un flag de "personaje desbloqueado" (sólo se sabe cuál se está
@@ -31,14 +36,10 @@
       agregados).
     - Dinero o rango de GTA Online (ningún stat confirmado).
 
-  Zona gris, "sin verificar en juego": la firma exacta de los natives
-  STAT_GET_* cuando se invocan crudos. Por eso este archivo SIEMPRE intenta
-  primero el wrapper cómodo que documenta Cherax (STATS.STAT_GET_*,
-  NETWORK.*, PLAYER.*, PED.*, SC_GET_NICKNAME) y sólo cae a invocar por hash
-  crudo en los pocos casos sin argumentos donde el hash y la firma están
-  confirmados (PLAYER_PED_ID y los 4 NETWORK_IS_*/NETWORK_HAS_*). Si un
-  valor no está disponible, el panel dice "no disponible" — nunca se
-  arriesga una llamada con una firma que no está confirmada.
+  Zona gris, "sin verificar en juego": si `ped.Model` (propiedad del objeto
+  CPed que devuelve `GTA.GetLocalPed()`) existe de verdad y da un hash de
+  modelo comparable — es lo único que queda sin confirmar del personaje
+  actual, y va protegido con pcall + aviso en el log si el tipo no cuadra.
 
   Reglas que se mantienen en cualquier apartado que se añada aquí:
     - Las natives sólo se llaman una vez armadas (ver 'armed' más abajo):
@@ -123,84 +124,79 @@ local UPD        = { state = "IDLE", remote_version = nil, last_error = nil,
                        _curl = nil, _ticks = 0, _deadline = nil }
 
 --==============================================================================
--- Natives: siempre intenta primero el wrapper cómodo (STATS.*, NETWORK.*,
--- PLAYER.*, PED.*, SC_GET_NICKNAME), que es como Cherax documenta llamarlos.
--- Sólo cae a invocar por hash crudo en los pocos casos sin argumentos donde
--- el hash está confirmado. Nada de esto se llama si 'armed' es falso — eso
+-- Natives / API de perfil. Nada de esto se llama si 'armed' es falso — eso
 -- lo garantizan read_offline()/read_online()/render_hud() antes de tocar
 -- cualquiera de estas funciones.
 --==============================================================================
 
-local function cap_player_ped_id()
-    if PLAYER and PLAYER.PLAYER_PED_ID then
-        local ok, v = pcall(PLAYER.PLAYER_PED_ID)
-        if ok then return v end
-    end
-    local ok, v = pcall(Natives.InvokeInt, 0xD80958FC74E988A6)   -- confirmado
-    if ok then return v end
+-- Reescrito tras el diagnóstico real de la API (PizzaScript_Diag.txt): ni
+-- STATS, ni PED, ni PLAYER, ni NETWORK existen como tales en este Cherax.
+-- Lo que sí existe, confirmado por enumeración (nunca invocado a ciegas):
+--   Stats.GetFloat/GetInt/GetBool(hash)   -- no "STATS.STAT_GET_*"
+--   GTA.GetLocalPed() / GetLocalPlayerId() / PointerToHandle()
+--   Players.GetName(id) / GetCPed(id) / ...
+-- Se dejan los hashes crudos SOLO donde ya estaban confirmados por fuente
+-- externa Y no hay wrapper real que los sustituya (los 4 NETWORK_IS_*).
+
+--- Objeto CPed (no el handle) — hace falta para leer propiedades como
+--- .Model, que no están disponibles vía natives crudas.
+local function cap_local_ped_object()
+    if not (GTA and GTA.GetLocalPed) then return nil end
+    local ok, ped = pcall(GTA.GetLocalPed)
+    if ok then return ped end
     return nil
 end
 
-local function cap_player_id()
-    if PLAYER and PLAYER.PLAYER_ID then
-        local ok, v = pcall(PLAYER.PLAYER_ID)
+local function cap_local_player_id()
+    if GTA and GTA.GetLocalPlayerId then
+        local ok, v = pcall(GTA.GetLocalPlayerId)
         if ok then return v end
     end
-    return nil   -- sin hash confirmado: no se inventa un fallback crudo
+    return nil
 end
 
-local function cap_is_ped_model(ped, model_hash)
-    if not ped or not (PED and PED.IS_PED_MODEL) then return nil end
-    local ok, v = pcall(PED.IS_PED_MODEL, ped, model_hash)
-    if ok then return v end
+--- Best-effort: intenta leer ped.Model. No hay confirmación de que este
+--- Cherax exponga esa propiedad ni de qué tipo devuelve — por eso todo va
+--- protegido y se registra el tipo real recibido la primera vez, en vez de
+--- asumir que es directamente comparable con un hash.
+local function cap_ped_model_hash(ped_obj)
+    if not ped_obj then return nil end
+    local ok, model = pcall(function() return ped_obj.Model end)
+    if not ok then return nil end
+    if type(model) == "number" then return model end
+    if model ~= nil then
+        Log.warn("Perfil", "ped.Model existe pero no es un número (es %s): %s", type(model), tostring(model))
+    end
     return nil
 end
 
 local function cap_stat_float(name)
-    if not (STATS and STATS.STAT_GET_FLOAT) then return nil end
-    local ok, v = pcall(STATS.STAT_GET_FLOAT, Utils.Joaat(name))
+    if not (Stats and Stats.GetFloat) then return nil end
+    local ok, v = pcall(Stats.GetFloat, Utils.Joaat(name))
     if ok then return v end
     return nil
 end
 
 local function cap_stat_int(name)
-    if not (STATS and STATS.STAT_GET_INT) then return nil end
-    local ok, v = pcall(STATS.STAT_GET_INT, Utils.Joaat(name))
+    if not (Stats and Stats.GetInt) then return nil end
+    local ok, v = pcall(Stats.GetInt, Utils.Joaat(name))
     if ok then return v end
     return nil
 end
 
-local function cap_network_bool(fname, hash)
-    if NETWORK and NETWORK[fname] then
-        local ok, v = pcall(NETWORK[fname])
-        if ok then return v end
-        return nil
-    end
-    if hash then
-        local ok, v = pcall(Natives.InvokeBool, hash)   -- confirmado, sin argumentos
-        if ok then return v end
-    end
-    return nil
-end
-
-local function cap_network_player_name(player)
-    if not player then return nil end
-    if NETWORK and NETWORK.NETWORK_PLAYER_GET_NAME then
-        local ok, v = pcall(NETWORK.NETWORK_PLAYER_GET_NAME, player)
-        if ok then return v end
-    end
-    local ok, v = pcall(Natives.InvokeString, 0x7718D2E2060837D2, player)   -- confirmado
+-- No existe un namespace NETWORK en este Cherax: sólo queda el hash crudo,
+-- confirmado por fuente externa, para estos 4 (todos sin argumentos).
+local function cap_network_bool(hash)
+    if not hash then return nil end
+    local ok, v = pcall(Natives.InvokeBool, hash)
     if ok then return v end
     return nil
 end
 
-local function cap_player_name(player)
-    if not player then return nil end
-    if PLAYER and PLAYER.GET_PLAYER_NAME then
-        local ok, v = pcall(PLAYER.GET_PLAYER_NAME, player)
-        if ok then return v end
-    end
-    local ok, v = pcall(Natives.InvokeString, 0x6D0DE6A7B5DA71F8, player)   -- confirmado
+--- Nombre del jugador local — vía Players.GetName(id), confirmado real.
+local function cap_players_get_name(player_id)
+    if not player_id or not (Players and Players.GetName) then return nil end
+    local ok, v = pcall(Players.GetName, player_id)
     if ok then return v end
     return nil
 end
@@ -250,7 +246,7 @@ local function render_hud()
 
     if profile.online then
         local o = profile.online
-        lines[#lines + 1] = { text = "ONLINE: " .. tostring(o.apodo or o.nombre_red or o.nombre_jugador or "?"), color = COLOR_CYAN }
+        lines[#lines + 1] = { text = "ONLINE: " .. tostring(o.apodo or o.nombre or "?"), color = COLOR_CYAN }
         lines[#lines + 1] = { text = string.format("Conectado: %s | Social Club: %s | Host: %s",
                                      tostring(o.conectado), tostring(o.cuenta_social_club), tostring(o.es_host)), color = COLOR_CYAN, scale = 0.3 }
     end
@@ -292,12 +288,13 @@ local function read_offline()
     end
 
     local data = { captured_at = os.date("%Y-%m-%d %H:%M:%S") }
-    local ped = cap_player_ped_id()
+    local ped_obj = cap_local_ped_object()
+    local model_hash = cap_ped_model_hash(ped_obj)
 
     data.personaje_actual = "no disponible"
-    if ped then
+    if model_hash then
         for _, c in ipairs(CHAR_MODELS) do
-            if cap_is_ped_model(ped, Utils.Joaat(c.model)) then
+            if model_hash == Utils.Joaat(c.model) then
                 data.personaje_actual = c.label
             end
         end
@@ -343,34 +340,27 @@ local function read_online()
     end
 
     local data = { captured_at = os.date("%Y-%m-%d %H:%M:%S") }
-    data.conectado          = cap_network_bool("NETWORK_IS_SIGNED_IN", 0x054354A99211EB96)
-    data.en_linea            = cap_network_bool("NETWORK_IS_SIGNED_ONLINE", 0x1077788E268557C2)
-    data.cuenta_social_club  = cap_network_bool("NETWORK_HAS_SOCIAL_CLUB_ACCOUNT", 0x67A5589628E0CFF6)
-    data.es_host             = cap_network_bool("NETWORK_IS_HOST", 0x8DB296B814EDDA07)
 
-    -- El apodo y los nombres de red SÓLO se intentan si NETWORK_IS_SIGNED_ONLINE
-    -- confirma una sesión de GTA Online activa. La primera prueba en juego
-    -- provocó un EXCEPTION_ACCESS_VIOLATION real dentro de socialclub.dll
-    -- (pila de la excepción pasando por socialclub.dll, sin ningún log entre
-    -- pulsar el botón y el crash) — pinta a que se llamó a estos natives sin
-    -- una sesión online real detrás, y eso no lo detiene un pcall: es un
-    -- crash nativo, no un error de Lua. No hay confirmación todavía de que
-    -- sea seguro en todos los casos ni siquiera estando en línea, así que
-    -- esto sigue siendo zona de riesgo — pruébese con cuidado.
-    if data.en_linea then
-        local player = cap_player_id()
-        data.nombre_red     = cap_network_player_name(player)
-        data.nombre_jugador = cap_player_name(player)
-        data.apodo          = cap_sc_nickname()
-    else
-        Log.warn("Perfil", "No hay sesión de GTA Online activa: se omite apodo/nombre de red (evita el crash ya visto)")
-        if GUI and GUI.AddToast then
-            GUI.AddToast("PizzaScript", "No estás en GTA Online: apodo y nombre de red no disponibles", 4000)
-        end
-    end
+    -- No existe namespace NETWORK en este Cherax (ver PizzaScript_Diag.txt):
+    -- estos 4 sólo pueden leerse por hash crudo, confirmado por fuente
+    -- externa, sin argumentos.
+    data.conectado          = cap_network_bool(0x054354A99211EB96)   -- NETWORK_IS_SIGNED_IN
+    data.en_linea            = cap_network_bool(0x1077788E268557C2)   -- NETWORK_IS_SIGNED_ONLINE
+    data.cuenta_social_club  = cap_network_bool(0x67A5589628E0CFF6)   -- NETWORK_HAS_SOCIAL_CLUB_ACCOUNT
+    data.es_host             = cap_network_bool(0x8DB296B814EDDA07)   -- NETWORK_IS_HOST
 
-    Log.info("Perfil", "Perfil online capturado (apodo: %s, conectado: %s, en línea: %s)",
-             tostring(data.apodo), tostring(data.conectado), tostring(data.en_linea))
+    -- Players.GetName(id) es un namespace general de Cherax (también sirve
+    -- para pillar el ped/cámara/etc. de cualquier jugador), no algo
+    -- específico de Social Club — a diferencia de SC_GET_NICKNAME (que ni
+    -- siquiera existe en este Cherax, confirmado) o NETWORK_PLAYER_GET_NAME
+    -- (sin wrapper real, sólo hash sin confirmar del todo), así que se usa
+    -- como fuente principal del nombre, dentro y fuera de una sesión online.
+    local player_id = cap_local_player_id()
+    data.nombre = cap_players_get_name(player_id)
+    data.apodo  = cap_sc_nickname()   -- confirmado ausente; se deja por si Cherax lo añade
+
+    Log.info("Perfil", "Perfil online capturado (nombre: %s, conectado: %s, en línea: %s)",
+             tostring(data.nombre), tostring(data.conectado), tostring(data.en_linea))
     return data
 end
 
@@ -393,8 +383,7 @@ local function build_save_lines()
         local o = profile.online
         add("online.capturado", o.captured_at)
         add("online.apodo", o.apodo)
-        add("online.nombre_red", o.nombre_red)
-        add("online.nombre_jugador", o.nombre_jugador)
+        add("online.nombre", o.nombre)
         add("online.conectado", o.conectado)
         add("online.en_linea", o.en_linea)
         add("online.cuenta_social_club", o.cuenta_social_club)
@@ -446,7 +435,7 @@ local function save_profile()
     end
 
     local nombre = sanitize_filename(profile.online and profile.online.apodo)
-                or sanitize_filename(profile.online and profile.online.nombre_red)
+                or sanitize_filename(profile.online and profile.online.nombre)
                 or ("sin_nombre_" .. os.date("%Y%m%d_%H%M%S"))
 
     local dir = profiles_dir()
@@ -669,11 +658,11 @@ end
 -- Arranque
 --==============================================================================
 
---- Vuelca al log TODO lo que exista en _G que parezca de Cherax/GTA (nunca
---- invoca nada, sólo enumera nombres con pairs() — cero riesgo de crash).
---- Los natives de lectura de perfil (STATS.*, PED.*) sólo existen si el
---- archivo oficial de natives está cargado aparte; en vez de seguir
---- adivinando qué hay, esto lo dice todo de una vez.
+--- Escribe un informe con TODO lo que exista en _G que parezca de
+--- Cherax/GTA (nunca invoca nada, sólo enumera nombres con pairs() — cero
+--- riesgo de crash). Así se descubrió que los namespaces reales se llaman
+--- distinto de lo esperado (`Stats`, `Players`... en vez de `STATS`,
+--- `PLAYER`) — en vez de seguir adivinando, esto lo dice todo de una vez.
 local STDLIB_NAMES = {
     _G = true, string = true, table = true, math = true, os = true, io = true,
     coroutine = true, debug = true, utf8 = true, package = true,
